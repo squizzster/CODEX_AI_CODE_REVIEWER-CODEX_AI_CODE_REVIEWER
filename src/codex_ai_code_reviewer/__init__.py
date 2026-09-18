@@ -1,2 +1,4 @@
-def main() -> None:
-    print("Hello from codex-ai-code-reviewer!")
+def main() -> int:
+    from codex_ai_code_reviewer.cli import main as cli_main
+
+    return cli_main()

@@ -5,3 +5,16 @@ An experimental AI-assisted code-review system for evaluating changes and produc
 ## Development mode
 
 **EXP** — rapid, evidence-led experimentation. The first useful review pipeline will be tested against representative code changes before the design is expanded.
+
+## Current workflow
+
+```bash
+uv sync --group dev
+./perform_a_code_review.py /path/to/repository
+```
+
+On startup, directories beneath `conf/projects/` define Prompt Runner projects and each
+`.yaml` filename defines a prompt name. Initialization currently registers missing
+projects and prompts; code analysis is the next experimental slice. The sibling
+`CODEX_PROMPT_RUNNER_SYSTEM` checkout is used by default; set
+`CODEX_PROMPT_RUNNER_PROJECT_ROOT` to override its location.
