@@ -14,10 +14,12 @@ from codex_ai_code_reviewer.initialization import (
     PromptRunnerCli,
     initialize_prompt_catalog,
     load_project_definitions,
+    load_variable_definitions,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_ROOT = PROJECT_ROOT / "conf" / "projects"
+VARIABLES_ROOT = PROJECT_ROOT / "conf" / "vars"
 DEFAULT_RUNNER_ROOT = PROJECT_ROOT.parent / "CODEX_PROMPT_RUNNER_SYSTEM"
 
 
@@ -45,6 +47,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         review_directory = _review_directory(arguments.directory)
         projects = load_project_definitions(CONFIG_ROOT)
+        variables = load_variable_definitions(VARIABLES_ROOT)
         configured_runner_root = os.environ.get("CODEX_PROMPT_RUNNER_PROJECT_ROOT")
         runner_root = (
             Path(configured_runner_root).expanduser()
@@ -61,6 +64,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "phase": "initialization_complete",
         "review_directory": str(review_directory),
         "catalog": report.as_dict(),
+        "variables": [variable.variable_name for variable in variables],
         "next_phase": "code_analysis_not_implemented",
     }
     print(json.dumps(output, sort_keys=True, separators=(",", ":")))

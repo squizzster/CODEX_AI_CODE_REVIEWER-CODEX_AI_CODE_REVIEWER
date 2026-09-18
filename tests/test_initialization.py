@@ -8,8 +8,10 @@ from codex_ai_code_reviewer.initialization import (
     InitializationError,
     ProjectDefinition,
     PromptDefinition,
+    VariableDefinition,
     initialize_prompt_catalog,
     load_project_definitions,
+    load_variable_definitions,
 )
 
 
@@ -150,3 +152,31 @@ def test_invalid_prompt_field_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(InitializationError, match="unexpected surprise"):
         load_project_definitions(tmp_path)
+
+
+def test_load_variable_definitions_maps_filename_to_scalar_value(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "ANALYZE_HEADER.yaml"
+    source.write_text(
+        "|\n  First paragraph.\n\n  Second paragraph.\n", encoding="utf-8"
+    )
+
+    variables = load_variable_definitions(tmp_path)
+
+    assert variables == (
+        VariableDefinition(
+            variable_name="ANALYZE_HEADER",
+            source_path=source,
+            value="First paragraph.\n\nSecond paragraph.\n",
+        ),
+    )
+
+
+def test_variable_yaml_must_be_a_string_scalar(tmp_path: Path) -> None:
+    (tmp_path / "ANALYZE_HEADER.yaml").write_text(
+        "value: wrong-shape\n", encoding="utf-8"
+    )
+
+    with pytest.raises(InitializationError, match="one non-empty string scalar"):
+        load_variable_definitions(tmp_path)

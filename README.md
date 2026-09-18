@@ -18,3 +18,7 @@ On startup, directories beneath `conf/projects/` define Prompt Runner projects a
 projects and prompts; code analysis is the next experimental slice. The sibling
 `CODEX_PROMPT_RUNNER_SYSTEM` checkout is used by default; set
 `CODEX_PROMPT_RUNNER_PROJECT_ROOT` to override its location.
+
+Reusable Prompt Runner values live as YAML string scalars under `conf/vars/`; each
+filename is its variable name. For example, `ANALYZE_HEADER.yaml` supplies
+`{{VAR:ANALYZE_HEADER}}` when a later prompt build or run requests that variable.

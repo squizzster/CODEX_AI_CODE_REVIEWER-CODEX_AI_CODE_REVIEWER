@@ -13,6 +13,7 @@ from typing import Any, Protocol
 import yaml
 
 PROJECT_NAME_PATTERN = re.compile(r"[A-Z0-9_-]+")
+VARIABLE_NAME_PATTERN = re.compile(r"[A-Z][A-Z0-9_]*")
 REASONING_EFFORTS = frozenset({"none", "low", "medium", "high", "xhigh", "max"})
 RISK_PROFILES = frozenset(
     {"LOCKED_DOWN", "WEB_RESEARCH", "BALANCED", "NETWORKED_WORKSPACE", "FULL_ACCESS"}
@@ -39,6 +40,13 @@ class PromptDefinition:
 class ProjectDefinition:
     project_name: str
     prompts: tuple[PromptDefinition, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class VariableDefinition:
+    variable_name: str
+    source_path: Path
+    value: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,6 +185,38 @@ def load_project_definitions(config_root: Path) -> tuple[ProjectDefinition, ...]
         projects.append(ProjectDefinition(project_name, prompts))
 
     return tuple(projects)
+
+
+def load_variable_definitions(config_root: Path) -> tuple[VariableDefinition, ...]:
+    """Load reusable Prompt Runner variable values from YAML scalar files."""
+
+    if not config_root.is_dir():
+        raise InitializationError(
+            f"Variable configuration directory does not exist: {config_root}"
+        )
+
+    variables: list[VariableDefinition] = []
+    for source_path in sorted(config_root.glob("*.yaml")):
+        if not source_path.is_file():
+            continue
+        variable_name = source_path.name.removesuffix(".yaml")
+        if VARIABLE_NAME_PATTERN.fullmatch(variable_name) is None:
+            raise InitializationError(
+                f"{source_path}: variable filename must match [A-Z][A-Z0-9_]*.yaml"
+            )
+        try:
+            loaded = yaml.safe_load(source_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, yaml.YAMLError) as error:
+            raise InitializationError(
+                f"{source_path}: cannot read variable YAML: {error}"
+            ) from error
+        if not isinstance(loaded, str) or not loaded:
+            raise InitializationError(
+                f"{source_path}: variable YAML must contain one non-empty string scalar"
+            )
+        variables.append(VariableDefinition(variable_name, source_path, loaded))
+
+    return tuple(variables)
 
 
 def initialize_prompt_catalog(
