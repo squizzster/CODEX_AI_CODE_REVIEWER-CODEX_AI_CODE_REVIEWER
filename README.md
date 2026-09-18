@@ -22,3 +22,5 @@ projects and prompts; code analysis is the next experimental slice. The sibling
 Reusable Prompt Runner values live as YAML string scalars under `conf/vars/`; each
 filename is its variable name. For example, `ANALYZE_HEADER.yaml` supplies
 `{{VAR:ANALYZE_HEADER}}` when a later prompt build or run requests that variable.
+The required review directory is resolved, checked for read/traverse access, and exposed
+to that same pipeline as the reserved runtime value `{{VAR:ARG_DIRECTORY}}`.

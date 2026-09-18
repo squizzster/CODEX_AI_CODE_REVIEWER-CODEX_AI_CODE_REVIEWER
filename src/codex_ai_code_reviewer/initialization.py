@@ -19,6 +19,7 @@ RISK_PROFILES = frozenset(
     {"LOCKED_DOWN", "WEB_RESEARCH", "BALANCED", "NETWORKED_WORKSPACE", "FULL_ACCESS"}
 )
 PROMPT_KEYS = frozenset({"template", "model", "reasoning_effort", "risk_profile"})
+ARG_DIRECTORY_VARIABLE = "ARG_DIRECTORY"
 
 
 class InitializationError(RuntimeError):
@@ -217,6 +218,27 @@ def load_variable_definitions(config_root: Path) -> tuple[VariableDefinition, ..
         variables.append(VariableDefinition(variable_name, source_path, loaded))
 
     return tuple(variables)
+
+
+def compose_variable_values(
+    configured_variables: tuple[VariableDefinition, ...], review_directory: Path
+) -> dict[str, str]:
+    """Combine configured values with reserved variables derived from invocation."""
+
+    values = {
+        variable.variable_name: variable.value for variable in configured_variables
+    }
+    if ARG_DIRECTORY_VARIABLE in values:
+        source_path = next(
+            variable.source_path
+            for variable in configured_variables
+            if variable.variable_name == ARG_DIRECTORY_VARIABLE
+        )
+        raise InitializationError(
+            f"{source_path}: {ARG_DIRECTORY_VARIABLE} is reserved for the review directory argument"
+        )
+    values[ARG_DIRECTORY_VARIABLE] = str(review_directory)
+    return values
 
 
 def initialize_prompt_catalog(

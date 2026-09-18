@@ -5,10 +5,12 @@ from pathlib import Path
 import pytest
 
 from codex_ai_code_reviewer.initialization import (
+    ARG_DIRECTORY_VARIABLE,
     InitializationError,
     ProjectDefinition,
     PromptDefinition,
     VariableDefinition,
+    compose_variable_values,
     initialize_prompt_catalog,
     load_project_definitions,
     load_variable_definitions,
@@ -180,3 +182,23 @@ def test_variable_yaml_must_be_a_string_scalar(tmp_path: Path) -> None:
 
     with pytest.raises(InitializationError, match="one non-empty string scalar"):
         load_variable_definitions(tmp_path)
+
+
+def test_compose_variable_values_adds_resolved_review_directory(
+    tmp_path: Path,
+) -> None:
+    configured = (
+        VariableDefinition("ANALYZE_HEADER", tmp_path / "header.yaml", "header"),
+    )
+
+    values = compose_variable_values(configured, tmp_path)
+
+    assert values == {"ANALYZE_HEADER": "header", ARG_DIRECTORY_VARIABLE: str(tmp_path)}
+
+
+def test_arg_directory_cannot_be_overridden_by_config(tmp_path: Path) -> None:
+    source = tmp_path / "ARG_DIRECTORY.yaml"
+    configured = (VariableDefinition(ARG_DIRECTORY_VARIABLE, source, "elsewhere"),)
+
+    with pytest.raises(InitializationError, match="reserved"):
+        compose_variable_values(configured, tmp_path)
