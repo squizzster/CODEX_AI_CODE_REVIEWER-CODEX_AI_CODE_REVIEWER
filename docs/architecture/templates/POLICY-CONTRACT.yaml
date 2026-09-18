@@ -1,0 +1,33 @@
+# Required core for a draft Policy Contract.
+schema_version: 1
+id: <responsibility-id>.<policy-id>
+purpose: <decision this policy makes>
+status: draft
+decision_owner: <person-team-standard-specification-or-governance-source>
+outcomes:
+  - code: <stable-outcome-code>
+    meaning: <meaning>
+
+# Optional while draft. Approved contracts require at least one rule, one
+# structured example, and an approval reference appropriate to the project.
+# vocabulary:
+#   <term>: <exact meaning>
+# inputs:
+#   - name: <input-name>
+#     meaning: <meaning>
+#     source: <owner-or-source>
+#     required: true
+# rules:
+#   - id: <RULE-001>
+#     when: <condition in domain language>
+#     outcome: <outcome-code>
+# examples:
+#   - id: <EX-001>
+#     given: {}
+#     expect: {outcome: <outcome-code>, reason: <rule-id>}
+# unknowns: []
+# approval:
+#   authority: <review-specification-standard-or-decision-record>
+#   evidence: <reference>
+#   decided_at: <ISO-date-if-used>
+# extensions: {}

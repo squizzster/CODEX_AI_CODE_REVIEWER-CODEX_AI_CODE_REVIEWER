@@ -1,0 +1,116 @@
+schema_version: 1
+architecture: modular-vertical-architecture
+maturity: experimental
+
+# This catalogue gives stable IDs to the constitution. `level: rule` is
+# normative only after an adopting project selects MVA or adopts the rule.
+rules:
+  - id: MVA-001
+    title: Make ownership explicit
+    level: rule
+    protects: ownership
+    statement: >-
+      Every consequential behaviour, policy, public contract, and authoritative
+      data item has one clear owning boundary.
+    evidence_examples:
+      - module or component manifest
+      - CODEOWNERS or team ownership map
+      - policy approval record
+
+  - id: MVA-002
+    title: Protect private implementation
+    level: rule
+    protects: boundary_integrity
+    statement: >-
+      A consumer does not depend on another module's private implementation or
+      write another module's authoritative state.
+    evidence_examples:
+      - language-specific dependency check
+      - restricted write path
+      - contract or integration test
+
+  - id: MVA-003
+    title: Keep consequential policy explicit
+    level: rule
+    protects: business_meaning
+    statement: >-
+      Consequential policy states its inputs, possible outcomes, decision authority,
+      external facts, and material uncertainty.
+    evidence_examples:
+      - approved Policy Contract
+      - executable decision examples
+
+  - id: MVA-004
+    title: Preserve dependency direction around policy
+    level: rule
+    protects: business_meaning
+    statement: >-
+      Policy does not depend directly on technical mechanisms; the calling slice
+      or workflow supplies facts and applies effects.
+    evidence_examples:
+      - focused policy tests without infrastructure
+      - language-specific import or dependency check
+
+  - id: MVA-005
+    title: Make multi-boundary failure explicit
+    level: rule
+    protects: recoverability
+    statement: >-
+      Work crossing independently failing or asynchronous boundaries defines
+      relevant failure, unknown-result, retry, and recovery behaviour.
+    evidence_examples:
+      - feature or workflow record
+      - failure-path integration tests
+      - runbook or recovery automation
+
+  - id: MVA-006
+    title: Keep declared architecture honest
+    level: rule
+    protects: assurance
+    statement: >-
+      Artefacts and checks do not claim guarantees they cannot prove; gaps remain
+      recommendations, manual review items, or explicit unknowns.
+    evidence_examples:
+      - validator scope statement
+      - separately reported errors, advisories, and skipped checks
+
+  - id: MVA-007
+    title: Make deviations visible where they matter
+    level: rule
+    protects: governance
+    statement: >-
+      A deliberate exception identifies its rule, scope, reason, owner, and a
+      proportionate review or removal trigger.
+    evidence_examples:
+      - accepted scoped ADR
+
+recommendations:
+  - id: MVA-R01
+    title: Organise around capabilities where they exist
+  - id: MVA-R02
+    title: Keep one behaviour locally understandable
+  - id: MVA-R03
+    title: Prefer direct calls for immediate in-process collaboration
+  - id: MVA-R04
+    title: Use events for facts and temporal decoupling
+  - id: MVA-R05
+    title: Prefer local transactions
+  - id: MVA-R06
+    title: Introduce purpose-named ports at material seams
+  - id: MVA-R07
+    title: Strengthen each boundary only from evidence
+  - id: MVA-R08
+    title: Version contracts where release independence creates compatibility risk
+
+validator_scope:
+  proves:
+    - YAML artefacts match their schemas
+    - declared module, policy, and dependency references are reported at the configured severity
+    - declared module dependency cycles are reported at the configured severity
+    - selected manifest values are mutually consistent
+  does_not_prove:
+    - source-code dependency direction
+    - database write ownership
+    - runtime or deployment topology
+    - business correctness or policy approval
+    - operational readiness

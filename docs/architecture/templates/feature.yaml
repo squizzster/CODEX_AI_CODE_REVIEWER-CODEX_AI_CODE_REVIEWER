@@ -1,0 +1,28 @@
+# Required core. A feature still names an owner boundary even when that boundary
+# has no module manifest yet; open-catalogue validation reports that as advisory.
+schema_version: 1
+id: <responsibility-id>.<behaviour-id>
+module: <owning-responsibility-id>
+purpose: <observable outcome>
+
+# Optional prompts — retain only those relevant to this behaviour.
+# status: <planned|active|deprecated>
+# shape: <direct|protected-policy|workflow|custom>
+# entrypoints:
+#   - kind: <http|message|schedule|cli|ui|library|internal|other>
+#     operation: <operation-or-path>
+# inputs: []
+# outcomes: []
+# failures: []
+# policies: []
+# data:
+#   reads: []
+#   writes: []
+# collaborations:
+#   - module: <provider-responsibility-id>
+#     contract: <provider-contract-id>
+#     mode: <direct|event|port|project-defined>
+#     seam_reason: <useful when a consumer port needs explanation>
+# verification: []
+# open_questions: []
+# extensions: {}

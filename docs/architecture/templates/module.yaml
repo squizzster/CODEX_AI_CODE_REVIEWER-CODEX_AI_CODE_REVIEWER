@@ -1,0 +1,23 @@
+# Required core. This template is intentionally invalid until placeholders are replaced.
+schema_version: 1
+id: <stable-responsibility-id>
+purpose: <responsibility this boundary owns>
+
+# Everything below is optional. Uncomment or add only what improves discovery.
+# owners:
+#   decision: <person-team-standard-or-governance-source>
+#   technical: <person-team-or-role>
+# public_contracts:
+#   - id: <contract-id>
+#     kind: <command|query|result|event|api|schema|protocol|other>
+#     audience: [<consumer>]
+#     compatibility: <coordinated|documented|versioned|project-defined>
+# owns:
+#   policies: []
+#   data: []
+# dependencies:
+#   - module: <provider-responsibility-id>
+#     contracts: [<provider-contract-id>]
+# private_implementation: <path-or-description>
+# open_questions: []
+# extensions: {}

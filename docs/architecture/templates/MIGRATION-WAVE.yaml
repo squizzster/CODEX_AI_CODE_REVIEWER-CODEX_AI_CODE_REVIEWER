@@ -1,0 +1,29 @@
+# Required core. A migration may move any project-owned path, contract, dataset,
+# model, build, API, responsibility, or state — not only database writes.
+schema_version: 1
+id: <migration-id>
+purpose: <outcome of this migration increment>
+
+# Optional prompts — select and reshape to match the migration risk.
+# owner: <person-team-standard-or-role>
+# current:
+#   paths: []
+#   contracts: []
+#   state_or_artifacts: []
+# target:
+#   locator: <path-contract-dataset-model-api-or-project-native-target>
+#   module: <module-id-if-a-declared-module-is-the-target>
+#   feature: <feature-id-if-a-declared-feature-is-the-target>
+# safety:
+#   characterisation_evidence: []
+#   comparison: []
+#   success_signals: []
+#   stop_signals: []
+# stages: []
+# recovery:
+#   action: <rollback-reconcile-or-forward-fix>
+#   supported_until: <stage-date-or-condition>
+#   limitations: []
+# completion: {}
+# open_questions: []
+# extensions: {}
