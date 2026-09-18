@@ -18,7 +18,7 @@ REASONING_EFFORTS = frozenset({"none", "low", "medium", "high", "xhigh", "max"})
 RISK_PROFILES = frozenset(
     {"LOCKED_DOWN", "WEB_RESEARCH", "BALANCED", "NETWORKED_WORKSPACE", "FULL_ACCESS"}
 )
-PROMPT_KEYS = frozenset({"template", "model", "reasoning_effort", "risk_profile"})
+PROMPT_KEYS = frozenset({"prompt", "model", "reasoning_effort", "risk_profile"})
 ARG_DIRECTORY_VARIABLE = "ARG_DIRECTORY"
 
 
@@ -122,7 +122,7 @@ def _load_prompt(project_name: str, source_path: Path) -> PromptDefinition:
 
     prompt_name = source_path.name.removesuffix(".yaml")
     _validate_prompt_name(prompt_name, source_path)
-    template = _required_string(loaded, "template", source_path)
+    template = _required_string(loaded, "prompt", source_path)
     model = _required_string(loaded, "model", source_path)
     reasoning_effort = _required_string(loaded, "reasoning_effort", source_path)
     risk_profile = _required_string(loaded, "risk_profile", source_path)

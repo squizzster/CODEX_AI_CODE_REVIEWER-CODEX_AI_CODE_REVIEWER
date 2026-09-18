@@ -14,8 +14,9 @@ uv sync --group dev
 ```
 
 On startup, directories beneath `conf/projects/` define Prompt Runner projects and each
-`.yaml` filename defines a prompt name. Initialization currently registers missing
-projects and prompts; code analysis is the next experimental slice. The sibling
+`.yaml` filename defines a prompt name. Each file stores its prompt text under a
+`prompt: |` block scalar. Initialization currently registers missing projects and
+prompts; code analysis is the next experimental slice. The sibling
 `CODEX_PROMPT_RUNNER_SYSTEM` checkout is used by default; set
 `CODEX_PROMPT_RUNNER_PROJECT_ROOT` to override its location.
 

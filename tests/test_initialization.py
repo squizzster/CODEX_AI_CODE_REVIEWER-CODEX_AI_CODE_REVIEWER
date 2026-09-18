@@ -49,7 +49,8 @@ def _write_prompt(path: Path, template: str = 'Say "hello"') -> None:
     path.write_text(
         "\n".join(
             [
-                f"template: {template!r}",
+                "prompt: |",
+                f"  {template}",
                 "model: gpt-6-astra",
                 "reasoning_effort: xhigh",
                 "risk_profile: LOCKED_DOWN",
@@ -73,7 +74,7 @@ def test_load_project_definitions_maps_directories_and_filenames(
     assert len(projects[0].prompts) == 1
     prompt = projects[0].prompts[0]
     assert prompt.prompt_name == "ANALYZE_PIPELINE"
-    assert prompt.template == 'Say "hello"'
+    assert prompt.template == 'Say "hello"\n'
     assert prompt.model == "gpt-6-astra"
     assert prompt.reasoning_effort == "xhigh"
     assert prompt.risk_profile == "LOCKED_DOWN"
@@ -153,6 +154,20 @@ def test_invalid_prompt_field_is_rejected(tmp_path: Path) -> None:
     source.write_text(source.read_text(encoding="utf-8") + "surprise: true\n")
 
     with pytest.raises(InitializationError, match="unexpected surprise"):
+        load_project_definitions(tmp_path)
+
+
+def test_legacy_template_field_is_rejected(tmp_path: Path) -> None:
+    source = tmp_path / "CODEX_AI_CODE_REVIEW" / "ANALYZE_PIPELINE.yaml"
+    _write_prompt(source)
+    source.write_text(
+        source.read_text(encoding="utf-8").replace("prompt: |", "template: |"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        InitializationError, match="missing prompt; unexpected template"
+    ):
         load_project_definitions(tmp_path)
 
 

@@ -1,4 +1,5 @@
-template: 'Say "goodbye"'
+prompt: |
+  Say "goodbye"
 model: gpt-6-astra
 reasoning_effort: xhigh
 risk_profile: LOCKED_DOWN
