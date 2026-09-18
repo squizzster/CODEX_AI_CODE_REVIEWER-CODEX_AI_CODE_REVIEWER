@@ -59,8 +59,6 @@ def play_game(generator: random.Random) -> tuple[bool, int, int, int]:
 def run_simulation(
     runs: int = DEFAULT_RUNS, seed: int | None = None
 ) -> SimulationReport:
-    if type(runs) is not int or runs < 1:
-        raise ValueError("runs must be a positive integer")
     generator = random.Random(seed)
     successes = 0
     total_attempts = 0
