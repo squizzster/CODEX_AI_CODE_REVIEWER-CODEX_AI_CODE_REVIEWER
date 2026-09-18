@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from test_code_review.auto_mated_guess_the_number import run_simulation
+from guess_the_number_game.auto_mated_guess_the_number import run_simulation
 
 
 def test_run_simulation_reports_every_requested_game() -> None:

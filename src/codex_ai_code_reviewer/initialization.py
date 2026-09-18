@@ -16,12 +16,17 @@ import yaml
 
 PROJECT_NAME_PATTERN = re.compile(r"[A-Z0-9_-]+")
 VARIABLE_NAME_PATTERN = re.compile(r"[A-Z][A-Z0-9_]*")
+VARIABLE_REFERENCE_PATTERN = re.compile(r"\{\{VAR:([A-Z][A-Z0-9_]*)\}\}")
 REASONING_EFFORTS = frozenset({"none", "low", "medium", "high", "xhigh", "max"})
 RISK_PROFILES = frozenset(
     {"LOCKED_DOWN", "WEB_RESEARCH", "BALANCED", "NETWORKED_WORKSPACE", "FULL_ACCESS"}
 )
 PROMPT_KEYS = frozenset({"prompt", "model", "reasoning_effort", "risk_profile"})
 ARG_DIRECTORY_VARIABLE = "ARG_DIRECTORY"
+AGENT_REPORT_VARIABLES = frozenset(
+    {"AGENT_1_REPORT", "AGENT_2_REPORT", "AGENT_3_REPORT"}
+)
+RUNTIME_VARIABLES = AGENT_REPORT_VARIABLES | {ARG_DIRECTORY_VARIABLE}
 
 
 class InitializationError(RuntimeError):
@@ -230,22 +235,65 @@ def load_variable_definitions(config_root: Path) -> tuple[VariableDefinition, ..
 def compose_variable_values(
     configured_variables: tuple[VariableDefinition, ...], review_directory: Path
 ) -> dict[str, str]:
-    """Combine configured values with reserved variables derived from invocation."""
+    """Combine runtime values and resolve trusted configured-variable references."""
 
     values = {
         variable.variable_name: variable.value for variable in configured_variables
     }
-    if ARG_DIRECTORY_VARIABLE in values:
+    conflicting_names = sorted(RUNTIME_VARIABLES & values.keys())
+    if conflicting_names:
+        conflicting_name = conflicting_names[0]
         source_path = next(
             variable.source_path
             for variable in configured_variables
-            if variable.variable_name == ARG_DIRECTORY_VARIABLE
+            if variable.variable_name == conflicting_name
         )
         raise InitializationError(
-            f"{source_path}: {ARG_DIRECTORY_VARIABLE} is reserved for the review directory argument"
+            f"{source_path}: {conflicting_name} is reserved for runtime pipeline data"
         )
     values[ARG_DIRECTORY_VARIABLE] = str(review_directory)
-    return values
+    source_by_name = {
+        variable.variable_name: variable.source_path
+        for variable in configured_variables
+    }
+    resolved: dict[str, str] = {}
+    resolving: list[str] = []
+
+    def resolve(variable_name: str) -> str:
+        if variable_name in resolved:
+            return resolved[variable_name]
+        if variable_name in resolving:
+            cycle_start = resolving.index(variable_name)
+            cycle = (*resolving[cycle_start:], variable_name)
+            source_path = source_by_name.get(variable_name, variable_name)
+            raise InitializationError(
+                f"{source_path}: variable reference cycle: {' -> '.join(cycle)}"
+            )
+
+        resolving.append(variable_name)
+
+        def replace_reference(match: re.Match[str]) -> str:
+            referenced_name = match.group(1)
+            if referenced_name not in values:
+                source_path = source_by_name.get(variable_name, variable_name)
+                raise InitializationError(
+                    f"{source_path}: variable {variable_name} references missing "
+                    f"variable {referenced_name}"
+                )
+            return resolve(referenced_name)
+
+        try:
+            value = VARIABLE_REFERENCE_PATTERN.sub(
+                replace_reference, values[variable_name]
+            )
+        finally:
+            resolving.pop()
+        resolved[variable_name] = value
+        return value
+
+    for variable_name in values:
+        resolve(variable_name)
+    return resolved
 
 
 def initialize_prompt_catalog(

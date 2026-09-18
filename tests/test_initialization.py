@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from codex_ai_code_reviewer.initialization import (
+    AGENT_REPORT_VARIABLES,
     ARG_DIRECTORY_VARIABLE,
     InitializationError,
     ProjectDefinition,
@@ -247,9 +248,56 @@ def test_compose_variable_values_adds_resolved_review_directory(
     assert values == {"ANALYZE_HEADER": "header", ARG_DIRECTORY_VARIABLE: str(tmp_path)}
 
 
-def test_arg_directory_cannot_be_overridden_by_config(tmp_path: Path) -> None:
-    source = tmp_path / "ARG_DIRECTORY.yaml"
-    configured = (VariableDefinition(ARG_DIRECTORY_VARIABLE, source, "elsewhere"),)
+def test_compose_variable_values_resolves_trusted_nested_references(
+    tmp_path: Path,
+) -> None:
+    configured = (
+        VariableDefinition(
+            "REVIEW_DIRECTORY_CONTEXT",
+            tmp_path / "REVIEW_DIRECTORY_CONTEXT.yaml",
+            "Review {{VAR:REVIEW_DIRECTORY}}",
+        ),
+        VariableDefinition(
+            "REVIEW_DIRECTORY",
+            tmp_path / "REVIEW_DIRECTORY.yaml",
+            "{{VAR:ARG_DIRECTORY}} and its children",
+        ),
+    )
+
+    values = compose_variable_values(configured, tmp_path)
+
+    assert values["REVIEW_DIRECTORY_CONTEXT"] == f"Review {tmp_path} and its children"
+    assert values["REVIEW_DIRECTORY"] == f"{tmp_path} and its children"
+
+
+def test_nested_variable_reference_must_exist(tmp_path: Path) -> None:
+    source = tmp_path / "CONTEXT.yaml"
+    configured = (VariableDefinition("CONTEXT", source, "{{VAR:MISSING}}"),)
+
+    with pytest.raises(
+        InitializationError, match="CONTEXT references missing variable MISSING"
+    ):
+        compose_variable_values(configured, tmp_path)
+
+
+def test_nested_variable_references_must_not_cycle(tmp_path: Path) -> None:
+    configured = (
+        VariableDefinition("FIRST", tmp_path / "FIRST.yaml", "{{VAR:SECOND}}"),
+        VariableDefinition("SECOND", tmp_path / "SECOND.yaml", "{{VAR:FIRST}}"),
+    )
+
+    with pytest.raises(InitializationError, match="FIRST -> SECOND -> FIRST"):
+        compose_variable_values(configured, tmp_path)
+
+
+@pytest.mark.parametrize(
+    "variable_name", sorted(AGENT_REPORT_VARIABLES | {ARG_DIRECTORY_VARIABLE})
+)
+def test_runtime_variables_cannot_be_overridden_by_config(
+    tmp_path: Path, variable_name: str
+) -> None:
+    source = tmp_path / f"{variable_name}.yaml"
+    configured = (VariableDefinition(variable_name, source, "spoofed"),)
 
     with pytest.raises(InitializationError, match="reserved"):
         compose_variable_values(configured, tmp_path)

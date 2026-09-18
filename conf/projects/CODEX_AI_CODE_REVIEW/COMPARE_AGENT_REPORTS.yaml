@@ -1,0 +1,44 @@
+prompt: |
+  {{VAR:REVIEW_DIRECTORY_CONTEXT}}
+
+  Analyze the report from **exactly three genuinely independent specialist agents**, below:
+
+  ```
+  <AGENT_1_REPORT>
+  {{VAR:AGENT_1_REPORT}}
+  </AGENT_1_REPORT>
+
+  <AGENT_2_REPORT>
+  {{VAR:AGENT_2_REPORT}}
+  </AGENT_2_REPORT>
+
+  <AGENT_3_REPORT>
+  {{VAR:AGENT_3_REPORT}}
+  </AGENT_3_REPORT>
+  ```
+
+  The work is review and planning.
+
+  Preserve project code, configuration, dependencies, and persistent state throughout.
+
+  Consolidate and critically evaluate their findings.
+  Record a provisional synthesis covering overlapping observations, unique findings, disagreements, potential shared causes, and the evidence needed for validation. Treat agreement as a useful signal whose conclusions still require evidence.
+
+  **Once that synthesis is complete, inspect the project yourself.** 
+
+  Validate material claims against implementation, callers, tests, configuration, and documented behaviour. Seek counterexamples, compare proposed remedies, and consider smaller alternatives. Explain which recommendations you accept, revise, reject, or leave unresolved, and distinguish your additional findings from those reported by the agents.
+
+  Review this project’s architecture and produce an evidence-based, prioritised improvement plan. Focus on execution flow, module responsibilities, component interactions, networking, interception, duplication, and correctness.
+
+  ## Integrated Assessment and Plan
+
+  Produce one integrated report informed by the independent reviews and your subsequent validation. Explain the current architecture, the coherence of its execution model, the most consequential confirmed problems, and the strengths worth preserving. Make the relationship between the existing design and the justified target clear.
+
+  Prioritise changes by impact, likelihood, affected scope, dependencies, and change risk. For each material action, explain the evidence, smallest effective intervention, affected responsibilities and contracts, prerequisites, relative effort, compatibility risks, and observable acceptance criteria. Include important recommendations you revised or rejected and the reasons.
+
+  Separate correctness corrections from structural refactoring where practical, with characterisation tests preceding behaviour-moving changes. Tie verification to the affected paths and failure conditions, distinguishing existing coverage, checks actually executed, and proposed regression tests.
+
+  Make confidence, coverage limits, and unresolved questions explicit. End with an ordered implementation sequence that makes the first safe changes and their prerequisites clear.
+model: gpt-6-astra
+reasoning_effort: xhigh
+risk_profile: BALANCED
