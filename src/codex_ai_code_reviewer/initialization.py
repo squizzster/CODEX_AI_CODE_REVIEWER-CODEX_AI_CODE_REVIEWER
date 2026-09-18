@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import subprocess
 import unicodedata
@@ -79,7 +80,7 @@ class PromptRunnerGateway(Protocol):
 
     def prompt_status(self, prompt: PromptDefinition) -> PromptStatus: ...
 
-    def register_prompt(self, prompt: PromptDefinition) -> None: ...
+    def synchronize_prompt(self, prompt: PromptDefinition) -> None: ...
 
 
 def _required_string(data: dict[str, Any], key: str, source_path: Path) -> str:
@@ -273,10 +274,12 @@ def initialize_prompt_catalog(
             if status == "current":
                 existing_prompts.append(identity)
             elif status == "missing":
-                gateway.register_prompt(prompt)
+                gateway.synchronize_prompt(prompt)
+                _require_synchronized_prompt(gateway, prompt)
                 created_prompts.append(identity)
             elif status == "drifted":
-                gateway.register_prompt(prompt)
+                gateway.synchronize_prompt(prompt)
+                _require_synchronized_prompt(gateway, prompt)
                 updated_prompts.append(identity)
             else:
                 raise InitializationError(
@@ -292,11 +295,28 @@ def initialize_prompt_catalog(
     )
 
 
+def _require_synchronized_prompt(
+    gateway: PromptRunnerGateway, prompt: PromptDefinition
+) -> None:
+    observed = gateway.prompt_status(prompt)
+    if observed != "current":
+        raise InitializationError(
+            f"Prompt synchronization did not converge for "
+            f"{prompt.project_name}/{prompt.prompt_name}: {observed}"
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class _CommandResult:
     exit_code: int
     payload: dict[str, Any]
     stderr: str
+
+
+def _runner_subprocess_environment() -> dict[str, str]:
+    environment = os.environ.copy()
+    environment.pop("VIRTUAL_ENV", None)
+    return environment
 
 
 class PromptRunnerCli:
@@ -319,6 +339,7 @@ class PromptRunnerCli:
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
+                env=_runner_subprocess_environment(),
             )
         except OSError as error:
             raise InitializationError(f"Cannot start Prompt Runner: {error}") from error
@@ -399,7 +420,9 @@ class PromptRunnerCli:
         self._require_success(result)
         raise AssertionError("unreachable")
 
-    def register_prompt(self, prompt: PromptDefinition) -> None:
+    def synchronize_prompt(self, prompt: PromptDefinition) -> None:
+        """Publish desired bytes/current version, then explicitly update defaults."""
+
         self._require_success(
             self._invoke(
                 "prompt",
@@ -416,4 +439,66 @@ class PromptRunnerCli:
                 prompt.risk_profile,
                 "--make-current",
             )
+        )
+        self._require_success(
+            self._invoke(
+                "prompt",
+                "set-defaults",
+                prompt.project_name,
+                prompt.prompt_name,
+                "--model",
+                prompt.model,
+                "--reasoning",
+                prompt.reasoning_effort,
+                "--risk-profile",
+                prompt.risk_profile,
+            )
+        )
+
+    def run_prompt(
+        self,
+        project_name: str,
+        prompt_name: str,
+        *,
+        variables: dict[str, str],
+        working_directory: Path,
+    ) -> dict[str, Any]:
+        """Force one live run while forwarding structured progress to stderr."""
+
+        command = [
+            "uv",
+            "run",
+            "codex-prompt-runner",
+            "run",
+            project_name,
+            prompt_name,
+        ]
+        for name, value in sorted(variables.items()):
+            command.extend(("--var", f"{name}={value}"))
+        command.extend(("--cwd", str(working_directory), "--live", "--detail"))
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=self._runner_root,
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=None,
+                text=True,
+                encoding="utf-8",
+                env=_runner_subprocess_environment(),
+            )
+        except OSError as error:
+            raise InitializationError(f"Cannot start Prompt Runner: {error}") from error
+        try:
+            payload = json.loads(completed.stdout)
+        except json.JSONDecodeError as error:
+            raise InitializationError(
+                f"Prompt Runner returned invalid run JSON (exit {completed.returncode})"
+            ) from error
+        if not isinstance(payload, dict):
+            raise InitializationError(
+                "Prompt Runner returned a non-object run JSON document"
+            )
+        return self._require_success(
+            _CommandResult(completed.returncode, payload, "forwarded to stderr")
         )

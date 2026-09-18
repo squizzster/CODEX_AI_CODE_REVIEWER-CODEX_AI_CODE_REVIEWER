@@ -44,7 +44,7 @@ class FakePromptRunner:
             return "missing"
         return "drifted" if identity in self.drifted_prompts else "current"
 
-    def register_prompt(self, prompt: PromptDefinition) -> None:
+    def synchronize_prompt(self, prompt: PromptDefinition) -> None:
         self.prompts.add((prompt.project_name, prompt.prompt_name))
         self.drifted_prompts.discard((prompt.project_name, prompt.prompt_name))
         self.registered_prompts.append(prompt)

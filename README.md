@@ -16,8 +16,9 @@ uv sync --group dev
 On startup, directories beneath `conf/projects/` define Prompt Runner projects and each
 `.yaml` filename defines a prompt name. Each file stores its prompt text under a
 `prompt: |` block scalar. Initialization registers missing projects and prompts, and
-publishes a new immutable version when configured prompt bytes or defaults change. Code
-analysis is the next experimental slice. The sibling
+publishes a new immutable version when configured prompt bytes or defaults change. The
+configured `ANALYZE_PIPELINE` then runs live, with structured progress forwarded to
+stderr and one final JSON result written to stdout. The sibling
 `CODEX_PROMPT_RUNNER_SYSTEM` checkout is used by default; set
 `CODEX_PROMPT_RUNNER_PROJECT_ROOT` to override its location.
 

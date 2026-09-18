@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from codex_ai_code_reviewer.cli import _review_directory
-from codex_ai_code_reviewer.initialization import InitializationError
+from codex_ai_code_reviewer.cli import _require_expected_execution, _review_directory
+from codex_ai_code_reviewer.initialization import InitializationError, PromptDefinition
 
 
 def test_review_directory_resolves_an_existing_readable_directory(
@@ -35,3 +35,27 @@ def test_review_directory_requires_read_and_traverse_access(
 
     with pytest.raises(InitializationError, match="not readable and traversable"):
         _review_directory(tmp_path)
+
+
+def test_execution_must_match_configured_policy(tmp_path: Path) -> None:
+    prompt = PromptDefinition(
+        project_name="CODEX_AI_CODE_REVIEW",
+        prompt_name="ANALYZE_PIPELINE",
+        source_path=tmp_path / "ANALYZE_PIPELINE.yaml",
+        template="Review",
+        model="gpt-6-astra",
+        reasoning_effort="xhigh",
+        risk_profile="BALANCED",
+    )
+    result = {
+        "delivery_mode": "LIVE",
+        "model": "gpt-6-astra",
+        "reasoning_effort": "xhigh",
+        "risk_profile": "BALANCED",
+    }
+
+    _require_expected_execution(result, prompt)
+
+    result["risk_profile"] = "LOCKED_DOWN"
+    with pytest.raises(InitializationError, match="configured policy"):
+        _require_expected_execution(result, prompt)
