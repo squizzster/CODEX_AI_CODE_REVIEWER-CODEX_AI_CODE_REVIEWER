@@ -23,9 +23,11 @@ class FakePromptRunner:
         *,
         projects: set[str] | None = None,
         prompts: set[tuple[str, str]] | None = None,
+        drifted_prompts: set[tuple[str, str]] | None = None,
     ) -> None:
         self.projects = projects or set()
         self.prompts = prompts or set()
+        self.drifted_prompts = drifted_prompts or set()
         self.registered_projects: list[str] = []
         self.registered_prompts: list[PromptDefinition] = []
 
@@ -36,11 +38,15 @@ class FakePromptRunner:
         self.projects.add(project_name)
         self.registered_projects.append(project_name)
 
-    def prompt_exists(self, project_name: str, prompt_name: str) -> bool:
-        return (project_name, prompt_name) in self.prompts
+    def prompt_status(self, prompt: PromptDefinition) -> str:
+        identity = (prompt.project_name, prompt.prompt_name)
+        if identity not in self.prompts:
+            return "missing"
+        return "drifted" if identity in self.drifted_prompts else "current"
 
     def register_prompt(self, prompt: PromptDefinition) -> None:
         self.prompts.add((prompt.project_name, prompt.prompt_name))
+        self.drifted_prompts.discard((prompt.project_name, prompt.prompt_name))
         self.registered_prompts.append(prompt)
 
 
@@ -136,6 +142,36 @@ def test_second_initialization_is_idempotent(tmp_path: Path) -> None:
     assert second.created_projects == ()
     assert second.created_prompts == ()
     assert second.existing_prompts == ("CODEX_AI_CODE_REVIEW/ANALYZE_PIPELINE",)
+
+
+def test_initialize_updates_a_drifted_prompt_then_becomes_idempotent(
+    tmp_path: Path,
+) -> None:
+    prompt = PromptDefinition(
+        "CODEX_AI_CODE_REVIEW",
+        "ANALYZE_PIPELINE",
+        tmp_path / "ANALYZE_PIPELINE.yaml",
+        "Updated prompt\n",
+        "gpt-6-astra",
+        "xhigh",
+        "LOCKED_DOWN",
+    )
+    identity = ("CODEX_AI_CODE_REVIEW", "ANALYZE_PIPELINE")
+    projects = (ProjectDefinition("CODEX_AI_CODE_REVIEW", (prompt,)),)
+    gateway = FakePromptRunner(
+        projects={"CODEX_AI_CODE_REVIEW"},
+        prompts={identity},
+        drifted_prompts={identity},
+    )
+
+    first = initialize_prompt_catalog(projects, gateway)
+    second = initialize_prompt_catalog(projects, gateway)
+
+    assert first.updated_prompts == ("CODEX_AI_CODE_REVIEW/ANALYZE_PIPELINE",)
+    assert first.created_prompts == ()
+    assert second.updated_prompts == ()
+    assert second.existing_prompts == ("CODEX_AI_CODE_REVIEW/ANALYZE_PIPELINE",)
+    assert gateway.registered_prompts == [prompt]
 
 
 def test_duplicate_global_prompt_name_is_rejected_before_initialization(

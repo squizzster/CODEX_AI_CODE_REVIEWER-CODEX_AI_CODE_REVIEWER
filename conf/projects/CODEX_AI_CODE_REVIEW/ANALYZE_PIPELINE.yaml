@@ -1,5 +1,23 @@
 prompt: |
-  Say "hello"
+  ---
+
+  Your base critical project review directory is:
+   {{VAR:ARG_DIRECTORY}}
+
+  with it's sub-directories so remain in this space, however you may, if you need, utilize a,
+     review_dir=$(mktemp -d /tmp/ai_code_XXXXXX_review)
+  where you may write temporary code if/as required whilst understanding that the your code-review itself is strictly read-only never the less a scratch-pad can be optionally useful.
+
+  ---
+
+  TASK:
+  {{VAR:ANALYZE_HEADER}}
+
+  ---
+
+  {{VAR:PIPELINE_SPECIALIST}}
+
+  ---
 model: gpt-6-astra
 reasoning_effort: xhigh
 risk_profile: LOCKED_DOWN

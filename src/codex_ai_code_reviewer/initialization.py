@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import subprocess
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 import yaml
 
@@ -55,6 +56,7 @@ class InitializationReport:
     created_projects: tuple[str, ...]
     existing_projects: tuple[str, ...]
     created_prompts: tuple[str, ...]
+    updated_prompts: tuple[str, ...]
     existing_prompts: tuple[str, ...]
 
     def as_dict(self) -> dict[str, Any]:
@@ -62,8 +64,12 @@ class InitializationReport:
             "created_projects": list(self.created_projects),
             "existing_projects": list(self.existing_projects),
             "created_prompts": list(self.created_prompts),
+            "updated_prompts": list(self.updated_prompts),
             "existing_prompts": list(self.existing_prompts),
         }
+
+
+type PromptStatus = Literal["missing", "current", "drifted"]
 
 
 class PromptRunnerGateway(Protocol):
@@ -71,7 +77,7 @@ class PromptRunnerGateway(Protocol):
 
     def register_project(self, project_name: str) -> None: ...
 
-    def prompt_exists(self, project_name: str, prompt_name: str) -> bool: ...
+    def prompt_status(self, prompt: PromptDefinition) -> PromptStatus: ...
 
     def register_prompt(self, prompt: PromptDefinition) -> None: ...
 
@@ -250,6 +256,7 @@ def initialize_prompt_catalog(
     created_projects: list[str] = []
     existing_projects: list[str] = []
     created_prompts: list[str] = []
+    updated_prompts: list[str] = []
     existing_prompts: list[str] = []
 
     for project in projects:
@@ -262,16 +269,25 @@ def initialize_prompt_catalog(
 
         for prompt in project.prompts:
             identity = f"{project.project_name}/{prompt.prompt_name}"
-            if gateway.prompt_exists(project.project_name, prompt.prompt_name):
+            status = gateway.prompt_status(prompt)
+            if status == "current":
                 existing_prompts.append(identity)
-            else:
+            elif status == "missing":
                 gateway.register_prompt(prompt)
                 created_prompts.append(identity)
+            elif status == "drifted":
+                gateway.register_prompt(prompt)
+                updated_prompts.append(identity)
+            else:
+                raise InitializationError(
+                    f"Prompt Runner adapter returned unknown prompt status: {status!r}"
+                )
 
     return InitializationReport(
         tuple(created_projects),
         tuple(existing_projects),
         tuple(created_prompts),
+        tuple(updated_prompts),
         tuple(existing_prompts),
     )
 
@@ -344,17 +360,42 @@ class PromptRunnerCli:
     def register_project(self, project_name: str) -> None:
         self._require_success(self._invoke("project", "register", project_name))
 
-    def prompt_exists(self, project_name: str, prompt_name: str) -> bool:
-        result = self._invoke("prompt", "list", project_name, prompt_name)
+    def prompt_status(self, prompt: PromptDefinition) -> PromptStatus:
+        result = self._invoke("prompt", "list", prompt.project_name, prompt.prompt_name)
         if result.exit_code == 0 and result.payload.get("ok") is True:
-            self._require_success(result)
-            return True
+            data = self._require_success(result)
+            defaults = data.get("defaults")
+            versions = data.get("versions")
+            if not isinstance(defaults, dict) or not isinstance(versions, list):
+                raise InitializationError(
+                    "Prompt Runner prompt state has an invalid shape"
+                )
+            current_versions = [
+                version
+                for version in versions
+                if isinstance(version, dict) and version.get("current") is True
+            ]
+            if len(current_versions) != 1:
+                raise InitializationError(
+                    "Prompt Runner prompt state must contain one current version"
+                )
+            expected_sha256 = hashlib.sha256(
+                prompt.template.encode("utf-8")
+            ).hexdigest()
+            current = current_versions[0]
+            matches = (
+                current.get("sha256") == expected_sha256
+                and defaults.get("model") == prompt.model
+                and defaults.get("reasoning_effort") == prompt.reasoning_effort
+                and defaults.get("risk_profile") == prompt.risk_profile
+            )
+            return "current" if matches else "drifted"
         errors = result.payload.get("errors")
         if isinstance(errors, list) and any(
             isinstance(error, dict) and error.get("code") == "prompt_not_found"
             for error in errors
         ):
-            return False
+            return "missing"
         self._require_success(result)
         raise AssertionError("unreachable")
 
