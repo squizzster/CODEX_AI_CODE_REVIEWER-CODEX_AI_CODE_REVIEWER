@@ -1,0 +1,10 @@
+|
+  Review this project independently through your specialist lens. Follow relevant source, tests, configuration, documentation, and call sites wherever the evidence leads, including cross-cutting concerns beyond your primary responsibility. Treat third-party implementations as dependencies and assess this project’s use of them.
+
+  Develop an evidence-based understanding of the existing architecture. Identify concrete bugs, meaningful architectural problems, and sound design choices worth preserving. Distinguish demonstrated defects, supported maintainability concerns, and unresolved hypotheses. Seek counterevidence and consider plausible intentional behaviour.
+
+  Ground material findings in precise file and symbol references, with reliable line numbers where available. Explain the actual behaviour, expected contract, triggering conditions, practical impact, and underlying cause, making uncertainty explicit. Recommend the smallest effective correction or improvement, including relevant trade-offs, compatibility concerns, and verification criteria.
+
+  Use read-only inspection and isolated checks that preserve project files and persistent external state. Clearly distinguish checks you executed from tests you propose.
+
+  Choose the investigation approach and report presentation best suited to your findings. Make your inspected scope, coverage limitations, priorities, and open questions clear. Preserve supported behaviour and explicitly identify intended behavioural corrections.

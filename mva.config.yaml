@@ -1,10 +1,8 @@
 schema_version: 1
-# Open catalogues permit gradual adoption. Switch unresolved references to
-# `error` only when the configured manifests are intended to be complete.
 relationships:
-  unresolved: advisory
+  unresolved: error
 checks:
-  dependency_cycles: advisory
+  dependency_cycles: error
 artifacts:
   rules:
     - docs/architecture/architecture-rules.yaml

@@ -1,13 +1,27 @@
 [project]
 name = "codex-ai-code-reviewer"
-version = "0.1.0"
-description = "Experimental AI-assisted code-review system"
+version = "0.1.0a1"
+description = "Parallel AI-assisted code review with audited synthesis"
 readme = "README.md"
 authors = [
     { name = "Mark", email = "squizzster@gmail.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "pyyaml>=6.0.3",
+]
+
+[project.urls]
+Repository = "https://github.com/squizzster/CODEX_AI_CODE_REVIEWER-CODEX_AI_CODE_REVIEWER"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.4",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
 
 [project.scripts]
 codex-ai-code-reviewer = "codex_ai_code_reviewer:main"

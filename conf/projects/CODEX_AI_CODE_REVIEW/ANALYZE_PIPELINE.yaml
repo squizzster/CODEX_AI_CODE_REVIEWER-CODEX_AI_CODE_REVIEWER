@@ -1,0 +1,14 @@
+prompt: |
+  {{VAR:REVIEW_DIRECTORY_CONTEXT}}
+
+  TASK:
+  {{VAR:ANALYZE_HEADER}}
+
+  ---
+
+  {{VAR:PIPELINE_SPECIALIST}}
+
+  ---
+model: gpt-6-astra
+reasoning_effort: xhigh
+risk_profile: BALANCED

@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+    echo "usage: ./run_the_code_review [--model MODEL] [--reasoning EFFORT] <directory>" >&2
+}
+
+arguments=("$@")
+review_directory_argument=""
+review_directory_index=-1
+index=0
+while (( index < ${#arguments[@]} )); do
+    argument=${arguments[index]}
+    case "$argument" in
+        --model|--reasoning)
+            if (( index + 1 >= ${#arguments[@]} )); then
+                usage
+                exit 2
+            fi
+            ((index += 2))
+            ;;
+        --model=*|--reasoning=*)
+            ((index += 1))
+            ;;
+        -*)
+            usage
+            exit 2
+            ;;
+        *)
+            if [[ -n "$review_directory_argument" ]]; then
+                usage
+                exit 2
+            fi
+            review_directory_argument=$argument
+            review_directory_index=$index
+            ((index += 1))
+            ;;
+    esac
+done
+
+if [[ -z "$review_directory_argument" ]]; then
+    usage
+    exit 2
+fi
+
+reviewer_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+review_directory=$(cd -- "$review_directory_argument" && pwd -P) || {
+    echo "error: review directory does not exist or cannot be entered: $review_directory_argument" >&2
+    exit 2
+}
+arguments[review_directory_index]=$review_directory
+
+cd -- "$review_directory"
+exec uv run --project "$reviewer_root" python \
+    "$reviewer_root/perform_a_code_review.py" "${arguments[@]}"
