@@ -14,8 +14,8 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from codex_ai_code_reviewer.initialization import (
-    AGENT_REPORT_VARIABLES,
     ARG_DIRECTORY_VARIABLE,
+    REASONING_EFFORTS,
     InitializationError,
     ProjectDefinition,
     PromptDefinition,
@@ -24,6 +24,8 @@ from codex_ai_code_reviewer.initialization import (
     initialize_prompt_catalog,
     load_project_definitions,
     load_variable_definitions,
+    prompt_output_variable_name,
+    variable_reference_names,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -31,6 +33,7 @@ CONFIG_ROOT = PROJECT_ROOT / "conf" / "projects"
 VARIABLES_ROOT = PROJECT_ROOT / "conf" / "vars"
 DEFAULT_RUNNER_ROOT = PROJECT_ROOT.parent / "CODEX_PROMPT_RUNNER_SYSTEM"
 FINAL_REVIEW_PATH = Path("/tmp/final_review.md")
+RESULT_SCHEMA = "codex-ai-code-reviewer.result/v1"
 ANALYSIS_PROJECT = "CODEX_AI_CODE_REVIEW"
 SPECIALIST_PROMPTS = (
     "ANALYZE_PIPELINE",
@@ -38,11 +41,6 @@ SPECIALIST_PROMPTS = (
     "ANALYZE_NETWORKING",
 )
 COMPARISON_PROMPT = "COMPARE_AGENT_REPORTS"
-REPORT_VARIABLE_BY_PROMPT = {
-    "ANALYZE_PIPELINE": "AGENT_1_REPORT",
-    "ANALYZE_BOUNDARIES": "AGENT_2_REPORT",
-    "ANALYZE_NETWORKING": "AGENT_3_REPORT",
-}
 ANALYSIS_PROMPTS = (*SPECIALIST_PROMPTS, COMPARISON_PROMPT)
 
 
@@ -54,6 +52,8 @@ class ReviewExecutionGateway(Protocol):
         *,
         variables: dict[str, str],
         working_directory: Path,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> dict[str, Any]: ...
 
 
@@ -61,12 +61,41 @@ class ReviewExecutionGateway(Protocol):
 class ReviewPipelineResult:
     specialist_reviews: dict[str, dict[str, Any]]
     comparison_review: dict[str, Any]
+    prompt_output_variables: dict[str, str]
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewExecutionOverrides:
+    model: str | None = None
+    reasoning_effort: str | None = None
+
+
+DEFAULT_EXECUTION_OVERRIDES = ReviewExecutionOverrides()
+
+
+def _model_name(value: str) -> str:
+    if not value or any(character.isspace() for character in value):
+        raise argparse.ArgumentTypeError(
+            "model must be non-empty and contain no whitespace"
+        )
+    return value
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="perform_a_code_review.py",
         description="Initialize configured prompts and perform a live code review.",
+    )
+    parser.add_argument(
+        "--model",
+        type=_model_name,
+        help="override every prompt's configured model for this run",
+    )
+    parser.add_argument(
+        "--reasoning",
+        dest="reasoning_effort",
+        choices=sorted(REASONING_EFFORTS),
+        help="override every prompt's configured reasoning effort for this run",
     )
     parser.add_argument("directory", type=Path, help="directory to review")
     return parser
@@ -93,6 +122,17 @@ def _review_directory(path: Path) -> Path:
     return resolved
 
 
+def _enter_review_directory(review_directory: Path) -> None:
+    """Anchor the reviewer process in the validated target before any execution."""
+
+    try:
+        os.chdir(review_directory)
+    except OSError as error:
+        raise InitializationError(
+            f"Cannot enter review directory {review_directory}: {error}"
+        ) from error
+
+
 def _analysis_prompt_definitions(
     projects: tuple[ProjectDefinition, ...],
 ) -> dict[str, PromptDefinition]:
@@ -113,12 +153,14 @@ def _analysis_prompt_definitions(
 
 
 def _require_expected_execution(
-    review: dict[str, object], prompt: PromptDefinition
+    review: dict[str, object],
+    prompt: PromptDefinition,
+    overrides: ReviewExecutionOverrides = DEFAULT_EXECUTION_OVERRIDES,
 ) -> None:
     expected = {
         "delivery_mode": "LIVE",
-        "model": prompt.model,
-        "reasoning_effort": prompt.reasoning_effort,
+        "model": overrides.model or prompt.model,
+        "reasoning_effort": overrides.reasoning_effort or prompt.reasoning_effort,
         "risk_profile": prompt.risk_profile,
     }
     mismatches = {
@@ -142,16 +184,55 @@ def _require_report_output(review: dict[str, Any], prompt: PromptDefinition) -> 
     return output
 
 
+def _require_pipeline_variable_contract(
+    prompts: dict[str, PromptDefinition], variables: dict[str, str]
+) -> None:
+    """Validate stage-visible variables before any prompt execution."""
+
+    output_variable_by_prompt = {
+        prompt_name: prompt_output_variable_name(prompt_name)
+        for prompt_name in ANALYSIS_PROMPTS
+    }
+    collisions = sorted(variables.keys() & output_variable_by_prompt.values())
+    if collisions:
+        raise InitializationError(
+            "Prompt output variables are generated at runtime and cannot be supplied: "
+            f"{', '.join(collisions)}"
+        )
+
+    base_variables = set(variables)
+    available_by_prompt = {
+        prompt_name: base_variables for prompt_name in SPECIALIST_PROMPTS
+    }
+    available_by_prompt[COMPARISON_PROMPT] = base_variables | {
+        output_variable_by_prompt[prompt_name] for prompt_name in SPECIALIST_PROMPTS
+    }
+
+    for prompt_name in ANALYSIS_PROMPTS:
+        missing = sorted(
+            variable_reference_names(prompts[prompt_name].template)
+            - available_by_prompt[prompt_name]
+        )
+        if missing:
+            raise InitializationError(
+                f"{prompts[prompt_name].source_path}: prompt {prompt_name} references "
+                f"variables unavailable at its pipeline stage: {', '.join(missing)}"
+            )
+
+
 def _run_review_pipeline(
     runner: ReviewExecutionGateway,
     prompts: dict[str, PromptDefinition],
     *,
     variables: dict[str, str],
     working_directory: Path,
+    overrides: ReviewExecutionOverrides = DEFAULT_EXECUTION_OVERRIDES,
 ) -> ReviewPipelineResult:
     """Run independent specialists concurrently, then audit their reports."""
 
+    _require_pipeline_variable_contract(prompts, variables)
     specialist_reviews: dict[str, dict[str, Any]] = {}
+    prompt_output_variables: dict[str, str] = {}
     failures: dict[str, str] = {}
     with ThreadPoolExecutor(
         max_workers=len(SPECIALIST_PROMPTS), thread_name_prefix="code-review"
@@ -163,6 +244,8 @@ def _run_review_pipeline(
                 prompt_name,
                 variables=variables,
                 working_directory=working_directory,
+                model=overrides.model,
+                reasoning_effort=overrides.reasoning_effort,
             ): prompt_name
             for prompt_name in SPECIALIST_PROMPTS
         }
@@ -171,12 +254,15 @@ def _run_review_pipeline(
             prompt = prompts[prompt_name]
             try:
                 review = future.result()
-                _require_expected_execution(review, prompt)
+                _require_expected_execution(review, prompt, overrides)
                 _require_report_output(review, prompt)
             except InitializationError as error:
                 failures[prompt_name] = f"{type(error).__name__}: {error}"
             else:
                 specialist_reviews[prompt_name] = review
+                prompt_output_variables[prompt_output_variable_name(prompt_name)] = (
+                    _require_report_output(review, prompt)
+                )
 
     if failures:
         details = "; ".join(
@@ -191,24 +277,25 @@ def _run_review_pipeline(
         for prompt_name in SPECIALIST_PROMPTS
     }
     comparison_variables = dict(variables)
-    comparison_variables.update(
-        {
-            REPORT_VARIABLE_BY_PROMPT[prompt_name]: _require_report_output(
-                ordered_specialist_reviews[prompt_name], prompts[prompt_name]
-            )
-            for prompt_name in SPECIALIST_PROMPTS
-        }
-    )
+    comparison_variables.update(prompt_output_variables)
     comparison = runner.run_prompt(
         ANALYSIS_PROJECT,
         COMPARISON_PROMPT,
         variables=comparison_variables,
         working_directory=working_directory,
+        model=overrides.model,
+        reasoning_effort=overrides.reasoning_effort,
     )
     comparison_prompt = prompts[COMPARISON_PROMPT]
-    _require_expected_execution(comparison, comparison_prompt)
-    _require_report_output(comparison, comparison_prompt)
-    return ReviewPipelineResult(ordered_specialist_reviews, comparison)
+    _require_expected_execution(comparison, comparison_prompt, overrides)
+    prompt_output_variables[prompt_output_variable_name(COMPARISON_PROMPT)] = (
+        _require_report_output(comparison, comparison_prompt)
+    )
+    return ReviewPipelineResult(
+        ordered_specialist_reviews,
+        comparison,
+        prompt_output_variables,
+    )
 
 
 def _review_summary(prompt_name: str, review: dict[str, Any]) -> dict[str, Any]:
@@ -258,14 +345,27 @@ def _write_final_review(content: str, output_path: Path = FINAL_REVIEW_PATH) -> 
 
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
+    overrides = ReviewExecutionOverrides(
+        model=arguments.model,
+        reasoning_effort=arguments.reasoning_effort,
+    )
     try:
         review_directory = _review_directory(arguments.directory)
+        _enter_review_directory(review_directory)
         projects = load_project_definitions(CONFIG_ROOT)
         analysis_prompts = _analysis_prompt_definitions(projects)
         configured_variables = load_variable_definitions(VARIABLES_ROOT)
+        reserved_prompt_output_variables = {
+            prompt_output_variable_name(prompt.prompt_name)
+            for project in projects
+            for prompt in project.prompts
+        }
         variable_values = compose_variable_values(
-            configured_variables, review_directory
+            configured_variables,
+            review_directory,
+            reserved_runtime_variables=reserved_prompt_output_variables,
         )
+        _require_pipeline_variable_contract(analysis_prompts, variable_values)
         configured_runner_root = os.environ.get("CODEX_PROMPT_RUNNER_PROJECT_ROOT")
         runner_root = (
             Path(configured_runner_root).expanduser()
@@ -279,6 +379,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             analysis_prompts,
             variables=variable_values,
             working_directory=review_directory,
+            overrides=overrides,
         )
         final_review_path = _write_final_review(
             _require_report_output(
@@ -291,12 +392,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
 
     output = {
+        "schema": RESULT_SCHEMA,
         "ok": True,
         "phase": "code_review_complete",
         "final_review_path": str(final_review_path),
         "review_directory": str(review_directory),
         "catalog": report.as_dict(),
-        "variables": sorted(variable_values.keys() | AGENT_REPORT_VARIABLES),
+        "variables": sorted(
+            variable_values.keys() | pipeline.prompt_output_variables.keys()
+        ),
         "runtime_variables": {ARG_DIRECTORY_VARIABLE: str(review_directory)},
         "specialist_reviews": {
             prompt_name: _review_summary(prompt_name, review)

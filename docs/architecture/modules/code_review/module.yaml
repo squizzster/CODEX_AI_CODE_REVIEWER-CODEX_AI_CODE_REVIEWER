@@ -1,0 +1,32 @@
+schema_version: 1
+id: code-review
+purpose: Coordinate specialist analysis and publish one audited code-review result.
+owners:
+  decision: project-maintainer
+  technical: project-maintainer
+public_contracts:
+  - id: perform-review-cli
+    kind: command
+    audience: [operators]
+    compatibility: documented
+  - id: code-review-result-v1
+    kind: schema
+    audience: [cli-consumers]
+    compatibility: versioned
+  - id: final-review-markdown
+    kind: result
+    audience: [operators]
+    compatibility: documented
+owns:
+  policies: []
+  data:
+    - prompt-configuration
+    - review-result
+private_implementation: src/codex_ai_code_reviewer/
+open_questions: []
+extensions:
+  development_mode: ALPHA
+  result_schema: docs/contracts/code-review-result.schema.json
+  external_dependencies:
+    - id: codex-prompt-runner-system
+      role: catalogue synchronization and live prompt execution

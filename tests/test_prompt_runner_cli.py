@@ -119,3 +119,49 @@ def test_live_run_forwards_events_and_supplies_variables(
     assert observed["options"]["stderr"] is None
     assert observed["options"]["stdout"] is subprocess.PIPE
     assert "VIRTUAL_ENV" not in observed["options"]["env"]
+
+
+def test_live_run_forwards_model_and_reasoning_overrides(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='runner'\nversion='0'\n")
+    observed: dict[str, object] = {}
+
+    def fake_run(command, **options):
+        observed["command"] = command
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps({"ok": True, "data": {"output": "review"}}),
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    runner = PromptRunnerCli(tmp_path)
+
+    runner.run_prompt(
+        "CODEX_AI_CODE_REVIEW",
+        "ANALYZE_PIPELINE",
+        variables={"ARG_DIRECTORY": "/project"},
+        working_directory=Path("/project"),
+        model="gpt-5.6-luna",
+        reasoning_effort="max",
+    )
+
+    assert observed["command"] == [
+        "uv",
+        "run",
+        "codex-prompt-runner",
+        "run",
+        "CODEX_AI_CODE_REVIEW",
+        "ANALYZE_PIPELINE",
+        "--model",
+        "gpt-5.6-luna",
+        "--reasoning",
+        "max",
+        "--var",
+        "ARG_DIRECTORY=/project",
+        "--cwd",
+        "/project",
+        "--live",
+        "--detail",
+    ]

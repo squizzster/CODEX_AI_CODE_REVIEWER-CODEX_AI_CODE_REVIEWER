@@ -4,8 +4,9 @@
   Your base critical project review directory is:
    {{VAR:ARG_DIRECTORY}}
 
-  with it's sub-directories so remain in this space, however you may, if you need, utilize a,
+  with only this specific {{VAR:ARG_DIRECTORY}} and it's sub-directories only so you should stay always within your critical path specifically.
+  You may, if you need, utilize a,
      mkdir -p ./tmp && review_dir=$(mktemp -d ./tmp/ai_code_XXXXXX_review)
-  where you may write temporary code if/as required whilst understanding that the your code-review itself is strictly read-only never the less a scratch-pad can be optionally useful.
+  where you may write temporary code if/as required whilst understanding that the your code-review itself is strictly read-only never the less a scratch-pad can be optionally useful whilst ensuring your remain in your designated project.
 
   ---

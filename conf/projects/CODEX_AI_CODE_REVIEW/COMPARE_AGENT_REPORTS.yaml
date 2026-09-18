@@ -4,17 +4,17 @@ prompt: |
   Analyze the report from **exactly three genuinely independent specialist agents**, below:
 
   ```
-  <AGENT_1_REPORT>
-  {{VAR:AGENT_1_REPORT}}
-  </AGENT_1_REPORT>
+  <AGENT_BOUNDARY_REPORT>
+  {{VAR:ANALYZE_BOUNDARIES_OUTPUT}}
+  </AGENT_BOUNDARY_REPORT>
 
-  <AGENT_2_REPORT>
-  {{VAR:AGENT_2_REPORT}}
-  </AGENT_2_REPORT>
+  <AGENT_PIPELINE_REPORT>
+  {{VAR:ANALYZE_PIPELINE_OUTPUT}}
+  </AGENT_PIPELINE_REPORT>
 
-  <AGENT_3_REPORT>
-  {{VAR:AGENT_3_REPORT}}
-  </AGENT_3_REPORT>
+  <AGENT_NETWORKING_REPORT>
+  {{VAR:ANALYZE_NETWORKING_OUTPUT}}
+  </AGENT_NETWORKING_REPORT>
   ```
 
   The work is review and planning.
@@ -41,4 +41,4 @@ prompt: |
   Make confidence, coverage limits, and unresolved questions explicit. End with an ordered implementation sequence that makes the first safe changes and their prerequisites clear.
 model: gpt-6-astra
 reasoning_effort: xhigh
-risk_profile: BALANCED
+risk_profile: NETWORKED_WORKSPACE

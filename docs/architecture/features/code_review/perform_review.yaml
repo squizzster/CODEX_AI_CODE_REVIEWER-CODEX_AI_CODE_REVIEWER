@@ -1,0 +1,72 @@
+schema_version: 1
+id: code-review.perform-review
+module: code-review
+purpose: Produce one audited review from three independent specialist reports.
+status: active
+shape: workflow
+entrypoints:
+  - kind: cli
+    operation: ./run_the_code_review [--model MODEL] [--reasoning EFFORT] <directory>
+  - kind: cli
+    operation: ./perform_a_code_review.py [--model MODEL] [--reasoning EFFORT] <directory>
+inputs:
+  - existing readable and traversable review directory
+  - repository-owned prompt and variable YAML
+  - optional run-scoped model and reasoning overrides
+outcomes:
+  - versioned JSON result on stdout
+  - audited Markdown report at /tmp/final_review.md
+  - each completed prompt owns one run-local <PROMPT_NAME>_OUTPUT variable
+failures:
+  - invalid directory, configuration, or variable graph returns exit code 2
+  - catalogue or execution failure returns exit code 2
+  - an incomplete specialist stage prevents comparison and publication
+policies: []
+data:
+  reads:
+    - conf/projects/**/*.yaml
+    - conf/vars/*.yaml
+    - reviewed directory through Prompt Runner
+  writes:
+    - Prompt Runner catalogue state
+    - /tmp/final_review.md after successful comparison
+verification:
+  - uv run pytest
+  - uv run ruff check .
+  - uv build
+  - mva validate
+open_questions: []
+extensions:
+  prompt_project: CODEX_AI_CODE_REVIEW
+  specialist_prompts:
+    - ANALYZE_PIPELINE
+    - ANALYZE_BOUNDARIES
+    - ANALYZE_NETWORKING
+  comparison_prompt: COMPARE_AGENT_REPORTS
+  execution:
+    specialist_concurrency: 3
+    comparison_requires_all_specialists: true
+    prompt_delivery_mode: LIVE
+    default_model: gpt-6-astra
+    default_reasoning_effort: xhigh
+    invocation_overrides_apply_to_all_prompts: true
+    invocation_overrides_do_not_mutate_catalogue_defaults: true
+    prompt_output_variables:
+      naming: <PROMPT_NAME>_OUTPUT
+      owner: completed_prompt
+      caller_override: forbidden
+      value_expansion: opaque
+      specialist_completion_order_affects_identity: false
+      comparison_inputs:
+        - ANALYZE_BOUNDARIES_OUTPUT
+        - ANALYZE_PIPELINE_OUTPUT
+        - ANALYZE_NETWORKING_OUTPUT
+    risk_profiles:
+      ANALYZE_PIPELINE: BALANCED
+      ANALYZE_BOUNDARIES: BALANCED
+      ANALYZE_NETWORKING: NETWORKED_WORKSPACE
+      COMPARE_AGENT_REPORTS: NETWORKED_WORKSPACE
+  operational_limits:
+    - specialist reports cross the Prompt Runner boundary as process arguments
+    - runs have no persisted resume state
+    - the Markdown publication path is fixed

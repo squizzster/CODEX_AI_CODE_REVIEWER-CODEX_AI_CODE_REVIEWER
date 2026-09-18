@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import unicodedata
+from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol
@@ -23,14 +24,29 @@ RISK_PROFILES = frozenset(
 )
 PROMPT_KEYS = frozenset({"prompt", "model", "reasoning_effort", "risk_profile"})
 ARG_DIRECTORY_VARIABLE = "ARG_DIRECTORY"
-AGENT_REPORT_VARIABLES = frozenset(
-    {"AGENT_1_REPORT", "AGENT_2_REPORT", "AGENT_3_REPORT"}
-)
-RUNTIME_VARIABLES = AGENT_REPORT_VARIABLES | {ARG_DIRECTORY_VARIABLE}
+PROMPT_OUTPUT_VARIABLE_SUFFIX = "_OUTPUT"
 
 
 class InitializationError(RuntimeError):
     """A configuration or Prompt Runner initialization failure."""
+
+
+def prompt_output_variable_name(prompt_name: str) -> str:
+    """Return the stable runtime variable owned by one completed prompt."""
+
+    variable_name = f"{prompt_name}{PROMPT_OUTPUT_VARIABLE_SUFFIX}"
+    if VARIABLE_NAME_PATTERN.fullmatch(variable_name) is None:
+        raise InitializationError(
+            f"prompt name {prompt_name!r} cannot form a runtime variable; "
+            "prompt filenames must match [A-Z][A-Z0-9_]*.yaml"
+        )
+    return variable_name
+
+
+def variable_reference_names(value: str) -> frozenset[str]:
+    """Return direct variable references without expanding opaque runtime values."""
+
+    return frozenset(VARIABLE_REFERENCE_PATTERN.findall(value))
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +122,10 @@ def _validate_prompt_name(prompt_name: str, source_path: Path) -> None:
         raise InitializationError(
             f"{source_path}: prompt name must be printable and at most 255 UTF-8 bytes"
         )
+    try:
+        prompt_output_variable_name(prompt_name)
+    except InitializationError as error:
+        raise InitializationError(f"{source_path}: {error}") from None
 
 
 def _load_prompt(project_name: str, source_path: Path) -> PromptDefinition:
@@ -233,14 +253,18 @@ def load_variable_definitions(config_root: Path) -> tuple[VariableDefinition, ..
 
 
 def compose_variable_values(
-    configured_variables: tuple[VariableDefinition, ...], review_directory: Path
+    configured_variables: tuple[VariableDefinition, ...],
+    review_directory: Path,
+    *,
+    reserved_runtime_variables: Collection[str] = (),
 ) -> dict[str, str]:
     """Combine runtime values and resolve trusted configured-variable references."""
 
     values = {
         variable.variable_name: variable.value for variable in configured_variables
     }
-    conflicting_names = sorted(RUNTIME_VARIABLES & values.keys())
+    reserved_names = {ARG_DIRECTORY_VARIABLE, *reserved_runtime_variables}
+    conflicting_names = sorted(reserved_names & values.keys())
     if conflicting_names:
         conflicting_name = conflicting_names[0]
         source_path = next(
@@ -510,6 +534,8 @@ class PromptRunnerCli:
         *,
         variables: dict[str, str],
         working_directory: Path,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         """Force one live run while forwarding structured progress to stderr."""
 
@@ -521,6 +547,10 @@ class PromptRunnerCli:
             project_name,
             prompt_name,
         ]
+        if model is not None:
+            command.extend(("--model", model))
+        if reasoning_effort is not None:
+            command.extend(("--reasoning", reasoning_effort))
         for name, value in sorted(variables.items()):
             command.extend(("--var", f"{name}={value}"))
         command.extend(("--cwd", str(working_directory), "--live", "--detail"))

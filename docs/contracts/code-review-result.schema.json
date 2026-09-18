@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/squizzster/CODEX_AI_CODE_REVIEWER-CODEX_AI_CODE_REVIEWER/blob/main/docs/contracts/code-review-result.schema.json",
+  "title": "CODEX AI Code Reviewer result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "ok",
+    "phase",
+    "final_review_path",
+    "review_directory",
+    "catalog",
+    "variables",
+    "runtime_variables",
+    "specialist_reviews",
+    "review"
+  ],
+  "properties": {
+    "schema": {
+      "const": "codex-ai-code-reviewer.result/v1"
+    },
+    "ok": {
+      "const": true
+    },
+    "phase": {
+      "const": "code_review_complete"
+    },
+    "final_review_path": {
+      "const": "/tmp/final_review.md"
+    },
+    "review_directory": {
+      "type": "string"
+    },
+    "catalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "created_projects",
+        "existing_projects",
+        "created_prompts",
+        "updated_prompts",
+        "existing_prompts"
+      ],
+      "properties": {
+        "created_projects": { "$ref": "#/$defs/stringArray" },
+        "existing_projects": { "$ref": "#/$defs/stringArray" },
+        "created_prompts": { "$ref": "#/$defs/stringArray" },
+        "updated_prompts": { "$ref": "#/$defs/stringArray" },
+        "existing_prompts": { "$ref": "#/$defs/stringArray" }
+      }
+    },
+    "variables": {
+      "description": "Names available during the completed run, including generated <PROMPT_NAME>_OUTPUT variables.",
+      "$ref": "#/$defs/stringArray"
+    },
+    "runtime_variables": {
+      "description": "Externally meaningful runtime inputs; generated prompt outputs remain represented by their review records.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ARG_DIRECTORY"],
+      "properties": {
+        "ARG_DIRECTORY": { "type": "string" }
+      }
+    },
+    "specialist_reviews": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ANALYZE_PIPELINE",
+        "ANALYZE_BOUNDARIES",
+        "ANALYZE_NETWORKING"
+      ],
+      "properties": {
+        "ANALYZE_PIPELINE": { "$ref": "#/$defs/review" },
+        "ANALYZE_BOUNDARIES": { "$ref": "#/$defs/review" },
+        "ANALYZE_NETWORKING": { "$ref": "#/$defs/review" }
+      }
+    },
+    "review": {
+      "$ref": "#/$defs/review"
+    }
+  },
+  "$defs": {
+    "stringArray": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string" }
+    },
+    "nullableString": {
+      "type": ["string", "null"]
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attempts",
+        "delivery_mode",
+        "execution_run_id",
+        "model",
+        "output",
+        "prompt",
+        "reasoning_effort",
+        "request_id",
+        "result_id",
+        "risk_profile",
+        "usage"
+      ],
+      "properties": {
+        "attempts": { "type": ["integer", "null"], "minimum": 0 },
+        "delivery_mode": { "const": "LIVE" },
+        "execution_run_id": { "$ref": "#/$defs/nullableString" },
+        "model": { "type": "string" },
+        "output": { "type": "string", "minLength": 1 },
+        "prompt": { "type": "string" },
+        "reasoning_effort": { "type": "string" },
+        "request_id": { "$ref": "#/$defs/nullableString" },
+        "result_id": { "$ref": "#/$defs/nullableString" },
+        "risk_profile": { "type": "string" },
+        "usage": { "type": ["object", "null"] }
+      }
+    }
+  }
+}

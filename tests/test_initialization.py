@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 
 from codex_ai_code_reviewer.initialization import (
-    AGENT_REPORT_VARIABLES,
     ARG_DIRECTORY_VARIABLE,
     InitializationError,
     ProjectDefinition,
@@ -15,6 +14,7 @@ from codex_ai_code_reviewer.initialization import (
     initialize_prompt_catalog,
     load_project_definitions,
     load_variable_definitions,
+    prompt_output_variable_name,
 )
 
 
@@ -185,6 +185,20 @@ def test_duplicate_global_prompt_name_is_rejected_before_initialization(
         load_project_definitions(tmp_path)
 
 
+def test_prompt_name_must_form_a_stable_output_variable(tmp_path: Path) -> None:
+    source = tmp_path / "CODEX_AI_CODE_REVIEW" / "analyze-pipeline.yaml"
+    _write_prompt(source)
+
+    with pytest.raises(InitializationError, match="runtime variable"):
+        load_project_definitions(tmp_path)
+
+
+def test_prompt_output_variable_name_preserves_prompt_identity() -> None:
+    assert (
+        prompt_output_variable_name("ANALYZE_BOUNDARIES") == "ANALYZE_BOUNDARIES_OUTPUT"
+    )
+
+
 def test_invalid_prompt_field_is_rejected(tmp_path: Path) -> None:
     source = tmp_path / "CODEX_AI_CODE_REVIEW" / "ANALYZE_PIPELINE.yaml"
     _write_prompt(source)
@@ -291,7 +305,8 @@ def test_nested_variable_references_must_not_cycle(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "variable_name", sorted(AGENT_REPORT_VARIABLES | {ARG_DIRECTORY_VARIABLE})
+    "variable_name",
+    [ARG_DIRECTORY_VARIABLE, "ANALYZE_PIPELINE_OUTPUT"],
 )
 def test_runtime_variables_cannot_be_overridden_by_config(
     tmp_path: Path, variable_name: str
@@ -300,4 +315,8 @@ def test_runtime_variables_cannot_be_overridden_by_config(
     configured = (VariableDefinition(variable_name, source, "spoofed"),)
 
     with pytest.raises(InitializationError, match="reserved"):
-        compose_variable_values(configured, tmp_path)
+        compose_variable_values(
+            configured,
+            tmp_path,
+            reserved_runtime_variables={"ANALYZE_PIPELINE_OUTPUT"},
+        )
