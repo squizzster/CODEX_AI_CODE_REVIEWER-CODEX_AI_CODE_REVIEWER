@@ -92,6 +92,8 @@ remain isolated from the source repository by Prompt Runner.
 - `conf/projects/<PROJECT>/<PROMPT>.yaml` owns prompt text and execution policy.
 - Invocation-level `--model` and `--reasoning` values override only their corresponding
   YAML defaults; risk profiles continue to come from YAML.
+- The current YAML defaults use `gpt-6-astra`: reconnaissance and the six specialists
+  use `xhigh` reasoning, while final comparison uses `max` reasoning.
 - `conf/vars/<VARIABLE>.yaml` owns reusable string values.
 - Reconnaissance uses its self-contained survey instructions without `ANALYZE_HEADER`;
   the six deep specialists use the shared defect-analysis instructions.

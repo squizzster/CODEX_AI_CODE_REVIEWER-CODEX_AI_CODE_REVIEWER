@@ -53,5 +53,5 @@ prompt: |
 
   Make confidence, coverage limits, and unresolved questions explicit. End with an ordered implementation sequence that makes the first safe changes and their prerequisites clear.
 model: gpt-6-astra
-reasoning_effort: xhigh
+reasoning_effort: max
 risk_profile: NETWORKED_WORKSPACE

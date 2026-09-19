@@ -3,9 +3,10 @@
 
   {{VAR:BASE_CRITICAL_DIRECTORY}}
 
-  with only this specific {{VAR:ARG_DIRECTORY}} and it's sub-directories only so you should stay always within your critical path specifically.
-  You may, if you need, utilize a,
-     mkdir -p ./tmp && review_dir=$(mktemp -d ./tmp/ai_code_XXXXXX_review)
-  where you may write temporary code if/as required whilst understanding that the your code-review itself is strictly read-only never the less a scratch-pad can be optionally useful whilst ensuring your remain in your designated project.
+  With only this specific {{VAR:ARG_DIRECTORY}} and it's sub-directories only so you should stay always within your critical path specifically.
+  Of course, for this deep-review, the source-code itself remains read-only.
+  You may write-utilize to `temp_scripts`, `scratch_pad`, etc;
+  if/as required whilst understanding that the the `source_code_read_only_link` is your review only space.
+  It's better to always remain inside the workpen, the source to avoid unintended context pollution in your fidelity.
 
   ---

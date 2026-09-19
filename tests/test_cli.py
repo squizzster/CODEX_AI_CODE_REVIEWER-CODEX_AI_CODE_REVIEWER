@@ -640,8 +640,18 @@ def test_repository_prompts_apply_the_intended_execution_profiles() -> None:
         "ANALYZE_PERFORMANCE": "BALANCED",
         "COMPARE_AGENT_REPORTS": "NETWORKED_WORKSPACE",
     }
-    assert {(prompt.model, prompt.reasoning_effort) for prompt in prompts.values()} == {
-        ("gpt-6-astra", "xhigh")
+    assert {
+        prompt_name: (prompt.model, prompt.reasoning_effort)
+        for prompt_name, prompt in prompts.items()
+    } == {
+        "ANALYZE_RECONNAISSANCE": ("gpt-6-astra", "xhigh"),
+        "ANALYZE_PIPELINE": ("gpt-6-astra", "xhigh"),
+        "ANALYZE_BOUNDARIES": ("gpt-6-astra", "xhigh"),
+        "ANALYZE_NETWORKING": ("gpt-6-astra", "xhigh"),
+        "ANALYZE_INTEGRITY": ("gpt-6-astra", "xhigh"),
+        "ANALYZE_SECURITY": ("gpt-6-astra", "xhigh"),
+        "ANALYZE_PERFORMANCE": ("gpt-6-astra", "xhigh"),
+        "COMPARE_AGENT_REPORTS": ("gpt-6-astra", "max"),
     }
 
 
