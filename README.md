@@ -34,18 +34,25 @@ Reports default to this project's `reports/` directory. A relative
 ## Pipeline
 
 1. Validate repository-owned YAML and synchronize the Prompt Runner catalogue.
-2. Run `ANALYZE_PIPELINE`, `ANALYZE_BOUNDARIES`, `ANALYZE_NETWORKING`,
+2. Consume each Prompt Runner JSONL event stream as it arrives. On the first stock
+   executor event carrying `isolated_workspace`, validate its runner-owned paths and
+   initialize `final_reports/`, `tmp/`, `temp_scripts/`, `scratch_pad/`, and
+   `README.md` inside that workspace. The README contains the resolved specialist
+   instruction, or the comparison prompt for `COMPARE_AGENT_REPORTS`.
+3. Run `ANALYZE_PIPELINE`, `ANALYZE_BOUNDARIES`, `ANALYZE_NETWORKING`,
    `ANALYZE_INTEGRITY`, `ANALYZE_SECURITY`, and `ANALYZE_PERFORMANCE` in parallel.
-3. Publish each successful result internally as `{{VAR:<PROMPT_NAME>_OUTPUT}}`.
-4. Run `COMPARE_AGENT_REPORTS` only after all specialist reports succeed, with each
+4. Publish each successful result internally as `{{VAR:<PROMPT_NAME>_OUTPUT}}`.
+5. Run `COMPARE_AGENT_REPORTS` only after all specialist reports succeed, with each
    report bound by prompt identity rather than completion order.
-5. Atomically publish all seven Markdown reports under
+6. Atomically publish all seven Markdown reports under
    `reports/<project_name>/<review_started_at_utc>/` and emit the complete
    versioned result as one JSON object on stdout.
 
-Progress from Prompt Runner is forwarded to stderr. Expected input, configuration,
-catalogue, execution, and publication failures return exit code `2`; no report directory
-is published from an incomplete pipeline.
+The reviewer intercepts and validates every Prompt Runner event before forwarding its
+original JSONL record to stderr. Cached results and custom executors legitimately omit
+`isolated_workspace`, so they do not trigger workspace initialization. Expected input,
+configuration, catalogue, execution, and publication failures return exit code `2`;
+no report directory is published from an incomplete pipeline.
 
 Each published filename follows `<PROMPT_NAME>_OUTPUT.md`, including
 `ANALYZE_SECURITY_OUTPUT.md` and `COMPARE_AGENT_REPORTS_OUTPUT.md`. The comparison
@@ -102,3 +109,6 @@ uvx --from "git+https://github.com/squizzster/MODULAR_VERTICAL_ARCHITECTURE-MODU
 - Runs have no persisted resume state. Process interruption relies on Prompt Runner
   and operating-system child-process termination.
 - Generated report runs are retained until an operator removes or archives them.
+- Workspace initialization currently uses a five-second bounded wait for Prompt Runner
+  to create its advertised directory during Codex startup. A proper acknowledged
+  workspace-ready handshake before Codex launch remains a TODO.

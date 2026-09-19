@@ -19,6 +19,7 @@ outcomes:
   - one reports/<project_name>/<review_started_at_utc>/ directory
   - one <PROMPT_NAME>_OUTPUT.md file for each specialist and the comparison
   - each completed prompt owns one run-local <PROMPT_NAME>_OUTPUT variable
+  - each stock-executor workspace is initialized from its first location-bearing live event
 failures:
   - invalid directory, configuration, or variable graph returns exit code 2
   - catalogue or execution failure returns exit code 2
@@ -31,13 +32,15 @@ data:
     - reviewed directory through Prompt Runner
   writes:
     - Prompt Runner catalogue state
+    - Prompt Runner isolated-workspace/{final_reports,tmp,temp_scripts,scratch_pad,README.md}
     - reports/<project_name>/<review_started_at_utc> after successful comparison
 verification:
   - uv run pytest
   - uv run ruff check .
   - uv build
   - mva validate
-open_questions: []
+open_questions:
+  - replace the bounded startup wait with an acknowledged workspace-ready handshake before Codex launch
 extensions:
   prompt_project: CODEX_AI_CODE_REVIEW
   specialist_prompts:
@@ -54,6 +57,19 @@ extensions:
     specialist_concurrency: 6
     comparison_requires_all_specialists: true
     prompt_delivery_mode: LIVE
+    live_event_consumption:
+      timing: real_time
+      validation: schema, invocation identity, contiguous event sequence, and workspace paths
+      stderr: forward original JSONL after interception
+      workspace_trigger: initial executing event containing isolated_workspace
+      workspace_directories:
+        - final_reports
+        - tmp
+        - temp_scripts
+        - scratch_pad
+      workspace_readme: resolved specialist instruction or comparison prompt
+      cached_result_creates_workspace: false
+      custom_executor_without_isolated_workspace: accepted_without_initialization
     default_model: gpt-6-astra
     default_reasoning_effort: xhigh
     invocation_overrides_apply_to_all_prompts: true
@@ -91,3 +107,4 @@ extensions:
     - specialist reports cross the Prompt Runner boundary as process arguments
     - runs have no persisted resume state
     - generated reports require external retention management
+    - workspace initialization uses a five-second bounded startup wait; an acknowledged workspace-ready handshake remains a TODO

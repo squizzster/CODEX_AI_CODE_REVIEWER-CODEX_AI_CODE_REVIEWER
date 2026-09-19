@@ -17,6 +17,7 @@ from codex_ai_code_reviewer.cli import (
     CONFIG_ROOT,
     RESULT_SCHEMA,
     SPECIALIST_PROMPTS,
+    SPECIALIST_VARIABLE_BY_PROMPT,
     VARIABLES_ROOT,
     ReviewExecutionOverrides,
     _analysis_prompt_definitions,
@@ -28,6 +29,7 @@ from codex_ai_code_reviewer.cli import (
     _review_directory,
     _review_run_id,
     _run_review_pipeline,
+    _workspace_readmes,
 )
 from codex_ai_code_reviewer.initialization import (
     InitializationError,
@@ -438,16 +440,8 @@ def test_repository_prompts_apply_the_intended_execution_profiles() -> None:
 
 def test_repository_specialists_use_their_named_lens_variables() -> None:
     prompts = _analysis_prompt_definitions(load_project_definitions(CONFIG_ROOT))
-    lens_variable_by_prompt = {
-        "ANALYZE_PIPELINE": "PIPELINE_SPECIALIST",
-        "ANALYZE_BOUNDARIES": "BOUNDARIES_SPECIALIST",
-        "ANALYZE_NETWORKING": "NETWORKING_SPECIALIST",
-        "ANALYZE_INTEGRITY": "INTEGRITY_SPECIALIST",
-        "ANALYZE_SECURITY": "SECURITY_SPECIALIST",
-        "ANALYZE_PERFORMANCE": "PERFORMANCE_SPECIALIST",
-    }
 
-    for prompt_name, lens_variable in lens_variable_by_prompt.items():
+    for prompt_name, lens_variable in SPECIALIST_VARIABLE_BY_PROMPT.items():
         expected_variables = {
             "REVIEW_DIRECTORY_CONTEXT",
             "ANALYZE_HEADER",
@@ -456,6 +450,22 @@ def test_repository_specialists_use_their_named_lens_variables() -> None:
         assert variable_reference_names(prompts[prompt_name].template) == (
             expected_variables
         )
+
+
+def test_workspace_readmes_use_specialist_context_and_comparison_prompt(
+    tmp_path: Path,
+) -> None:
+    prompts = _analysis_prompt_definitions(load_project_definitions(CONFIG_ROOT))
+    variables = compose_variable_values(
+        load_variable_definitions(VARIABLES_ROOT), tmp_path
+    )
+
+    readmes = _workspace_readmes(prompts, variables)
+
+    assert set(readmes) == set(ANALYSIS_PROMPTS)
+    for prompt_name, variable_name in SPECIALIST_VARIABLE_BY_PROMPT.items():
+        assert readmes[prompt_name] == variables[variable_name]
+    assert readmes[COMPARISON_PROMPT] == prompts[COMPARISON_PROMPT].template
 
 
 def test_comparison_prompt_uses_named_specialist_output_variables() -> None:

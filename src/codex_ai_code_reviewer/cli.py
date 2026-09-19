@@ -31,6 +31,7 @@ from codex_ai_code_reviewer.initialization import (
     prompt_output_variable_name,
     variable_reference_names,
 )
+from codex_ai_code_reviewer.live_events import ReviewWorkspaceInitializer
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_ROOT = PROJECT_ROOT / "conf" / "projects"
@@ -48,6 +49,14 @@ SPECIALIST_PROMPTS = (
     "ANALYZE_SECURITY",
     "ANALYZE_PERFORMANCE",
 )
+SPECIALIST_VARIABLE_BY_PROMPT = {
+    "ANALYZE_PIPELINE": "PIPELINE_SPECIALIST",
+    "ANALYZE_BOUNDARIES": "BOUNDARIES_SPECIALIST",
+    "ANALYZE_NETWORKING": "NETWORKING_SPECIALIST",
+    "ANALYZE_INTEGRITY": "INTEGRITY_SPECIALIST",
+    "ANALYZE_SECURITY": "SECURITY_SPECIALIST",
+    "ANALYZE_PERFORMANCE": "PERFORMANCE_SPECIALIST",
+}
 COMPARISON_PROMPT = "COMPARE_AGENT_REPORTS"
 ANALYSIS_PROMPTS = (*SPECIALIST_PROMPTS, COMPARISON_PROMPT)
 
@@ -251,6 +260,20 @@ def _require_pipeline_variable_contract(
                 f"{prompts[prompt_name].source_path}: prompt {prompt_name} references "
                 f"variables unavailable at its pipeline stage: {', '.join(missing)}"
             )
+
+
+def _workspace_readmes(
+    prompts: dict[str, PromptDefinition], variables: dict[str, str]
+) -> dict[str, str]:
+    """Build the prompt-specific context copied into isolated workspaces."""
+
+    return {
+        **{
+            prompt_name: variables[variable_name]
+            for prompt_name, variable_name in SPECIALIST_VARIABLE_BY_PROMPT.items()
+        },
+        COMPARISON_PROMPT: prompts[COMPARISON_PROMPT].template,
+    }
 
 
 def _run_review_pipeline(
@@ -466,7 +489,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             if configured_runner_root
             else DEFAULT_RUNNER_ROOT
         )
-        runner = PromptRunnerCli(runner_root)
+        runner = PromptRunnerCli(
+            runner_root,
+            live_event_handler=ReviewWorkspaceInitializer(
+                _workspace_readmes(analysis_prompts, variable_values)
+            ),
+        )
         report = initialize_prompt_catalog(projects, runner)
         review_run_id = _review_run_id()
         pipeline = _run_review_pipeline(
