@@ -9,7 +9,7 @@ public_contracts:
     kind: command
     audience: [operators]
     compatibility: documented
-  - id: code-review-result-v2
+  - id: code-review-result-v3
     kind: schema
     audience: [cli-consumers]
     compatibility: versioned

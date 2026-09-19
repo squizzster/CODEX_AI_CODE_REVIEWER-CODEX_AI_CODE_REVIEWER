@@ -6,16 +6,18 @@ status: active
 shape: workflow
 entrypoints:
   - kind: cli
-    operation: ./run_the_code_review [--model MODEL] [--reasoning EFFORT] [--reports-directory DIRECTORY] <directory>
+    operation: ./run_the_code_review [--prompt-version {original,v2}] [--model MODEL] [--reasoning EFFORT] [--reports-directory DIRECTORY] <directory>
   - kind: cli
-    operation: ./perform_a_code_review.py [--model MODEL] [--reasoning EFFORT] [--reports-directory DIRECTORY] <directory>
+    operation: ./perform_a_code_review.py [--prompt-version {original,v2}] [--model MODEL] [--reasoning EFFORT] [--reports-directory DIRECTORY] <directory>
 inputs:
   - existing readable and traversable review directory
   - repository-owned prompt and variable YAML
+  - optional prompt version selecting the original or v2 on-disk project
   - optional run-scoped model and reasoning overrides
   - optional reports root override
 outcomes:
   - versioned JSON result on stdout
+  - selected prompt version and concrete prompt project recorded in the result
   - one reports/<project_name>/<review_started_at_utc>/ directory
   - one <PROMPT_NAME>_OUTPUT.md file for each specialist and the comparison
   - one reconnaissance question block routed exclusively to each matching specialist
@@ -45,7 +47,11 @@ verification:
 open_questions:
   - add an acknowledged workspace-ready handshake before Codex launch
 extensions:
-  prompt_project: CODEX_AI_CODE_REVIEW
+  prompt_projects:
+    original: CODEX_AI_CODE_REVIEW
+    v2: CODEX_AI_CODE_REVIEW_V2
+  default_prompt_version: original
+  project_variable_overlay: conf/projects/<PROMPT_PROJECT>/vars/*.yaml
   specialist_prompts:
     - ANALYZE_PIPELINE
     - ANALYZE_BOUNDARIES

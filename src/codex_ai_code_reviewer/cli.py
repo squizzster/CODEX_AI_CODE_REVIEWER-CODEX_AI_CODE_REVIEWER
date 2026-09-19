@@ -25,6 +25,7 @@ from codex_ai_code_reviewer.initialization import (
     ProjectDefinition,
     PromptDefinition,
     PromptRunnerCli,
+    VariableDefinition,
     compose_variable_values,
     initialize_prompt_catalog,
     load_project_definitions,
@@ -42,8 +43,14 @@ CONFIG_ROOT = PROJECT_ROOT / "conf" / "projects"
 VARIABLES_ROOT = PROJECT_ROOT / "conf" / "vars"
 DEFAULT_RUNNER_ROOT = PROJECT_ROOT.parent / "CODEX_PROMPT_RUNNER_SYSTEM"
 DEFAULT_REPORTS_ROOT = PROJECT_ROOT / "reports"
-RESULT_SCHEMA = "codex-ai-code-reviewer.result/v2"
+RESULT_SCHEMA = "codex-ai-code-reviewer.result/v3"
 ANALYSIS_PROJECT = "CODEX_AI_CODE_REVIEW"
+V2_ANALYSIS_PROJECT = "CODEX_AI_CODE_REVIEW_V2"
+DEFAULT_PROMPT_VERSION = "original"
+PROMPT_PROJECT_BY_VERSION = {
+    DEFAULT_PROMPT_VERSION: ANALYSIS_PROJECT,
+    "v2": V2_ANALYSIS_PROJECT,
+}
 RECONNAISSANCE_PROMPT = "ANALYZE_RECONNAISSANCE"
 QUESTIONS_VARIABLE = "QUESTIONS"
 SPECIALIST_PROMPTS = (
@@ -119,6 +126,12 @@ def _parser() -> argparse.ArgumentParser:
         description="Initialize configured prompts and perform a live code review.",
     )
     parser.add_argument(
+        "--prompt-version",
+        choices=tuple(PROMPT_PROJECT_BY_VERSION),
+        default=DEFAULT_PROMPT_VERSION,
+        help="select the original or v2 on-disk prompt project",
+    )
+    parser.add_argument(
         "--model",
         type=_model_name,
         help="override every prompt's configured model for this run",
@@ -184,21 +197,40 @@ def _reports_root(path: Path) -> Path:
 
 def _analysis_prompt_definitions(
     projects: tuple[ProjectDefinition, ...],
+    project_name: str = ANALYSIS_PROJECT,
 ) -> dict[str, PromptDefinition]:
     prompts = {
         prompt.prompt_name: prompt
         for project in projects
-        if project.project_name == ANALYSIS_PROJECT
+        if project.project_name == project_name
         for prompt in project.prompts
         if prompt.prompt_name in ANALYSIS_PROMPTS
     }
     missing = [name for name in ANALYSIS_PROMPTS if name not in prompts]
     if missing:
         raise InitializationError(
-            f"Configuration must define {ANALYSIS_PROJECT} prompts: "
+            f"Configuration must define {project_name} prompts: "
             f"{', '.join(missing)}"
         )
     return {name: prompts[name] for name in ANALYSIS_PROMPTS}
+
+
+def _analysis_variable_definitions(
+    project_name: str,
+) -> tuple[VariableDefinition, ...]:
+    """Overlay one prompt project's variables onto the shared variable set."""
+
+    shared_variables = load_variable_definitions(VARIABLES_ROOT)
+    project_variables = load_variable_definitions(
+        CONFIG_ROOT / project_name / "vars"
+    )
+    variables_by_name = {
+        variable.variable_name: variable for variable in shared_variables
+    }
+    variables_by_name.update(
+        {variable.variable_name: variable for variable in project_variables}
+    )
+    return tuple(variables_by_name[name] for name in sorted(variables_by_name))
 
 
 def _require_expected_execution(
@@ -404,13 +436,14 @@ def _run_review_pipeline(
     variables: dict[str, str],
     working_directory: Path,
     overrides: ReviewExecutionOverrides = DEFAULT_EXECUTION_OVERRIDES,
+    project_name: str = ANALYSIS_PROJECT,
 ) -> ReviewPipelineResult:
     """Generate questions, run specialists concurrently, then audit reports."""
 
     _require_pipeline_variable_contract(prompts, variables)
     reconnaissance_prompt = prompts[RECONNAISSANCE_PROMPT]
     reconnaissance = runner.run_prompt(
-        ANALYSIS_PROJECT,
+        project_name,
         RECONNAISSANCE_PROMPT,
         variables=variables,
         working_directory=working_directory,
@@ -432,7 +465,7 @@ def _run_review_pipeline(
         futures = {
             executor.submit(
                 runner.run_prompt,
-                ANALYSIS_PROJECT,
+                project_name,
                 prompt_name,
                 variables={
                     **variables,
@@ -474,7 +507,7 @@ def _run_review_pipeline(
     comparison_variables = dict(variables)
     comparison_variables.update(prompt_output_variables)
     comparison = runner.run_prompt(
-        ANALYSIS_PROJECT,
+        project_name,
         COMPARISON_PROMPT,
         variables=comparison_variables,
         working_directory=working_directory,
@@ -600,6 +633,7 @@ def _publish_reports(
 
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
+    prompt_project = PROMPT_PROJECT_BY_VERSION[arguments.prompt_version]
     overrides = ReviewExecutionOverrides(
         model=arguments.model,
         reasoning_effort=arguments.reasoning_effort,
@@ -609,8 +643,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         reports_root = _reports_root(arguments.reports_directory)
         _enter_review_directory(review_directory)
         projects = load_project_definitions(CONFIG_ROOT)
-        analysis_prompts = _analysis_prompt_definitions(projects)
-        configured_variables = load_variable_definitions(VARIABLES_ROOT)
+        analysis_prompts = _analysis_prompt_definitions(projects, prompt_project)
+        configured_variables = _analysis_variable_definitions(prompt_project)
         reserved_prompt_output_variables = {
             prompt_output_variable_name(prompt.prompt_name)
             for project in projects
@@ -647,6 +681,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             variables=variable_values,
             working_directory=review_directory,
             overrides=overrides,
+            project_name=prompt_project,
         )
         publication = _publish_reports(
             pipeline.prompt_output_variables,
@@ -662,6 +697,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "schema": RESULT_SCHEMA,
         "ok": True,
         "phase": "code_review_complete",
+        "prompt_version": arguments.prompt_version,
+        "prompt_project": prompt_project,
         "report_project_name": publication.project_name,
         "report_run_id": publication.run_id,
         "report_directory": str(publication.report_directory),

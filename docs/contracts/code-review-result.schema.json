@@ -8,6 +8,8 @@
     "schema",
     "ok",
     "phase",
+    "prompt_version",
+    "prompt_project",
     "report_project_name",
     "report_run_id",
     "report_directory",
@@ -21,13 +23,19 @@
   ],
   "properties": {
     "schema": {
-      "const": "codex-ai-code-reviewer.result/v2"
+      "const": "codex-ai-code-reviewer.result/v3"
     },
     "ok": {
       "const": true
     },
     "phase": {
       "const": "code_review_complete"
+    },
+    "prompt_version": {
+      "enum": ["original", "v2"]
+    },
+    "prompt_project": {
+      "enum": ["CODEX_AI_CODE_REVIEW", "CODEX_AI_CODE_REVIEW_V2"]
     },
     "report_project_name": {
       "type": "string",

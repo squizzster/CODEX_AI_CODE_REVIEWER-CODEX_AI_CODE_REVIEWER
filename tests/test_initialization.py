@@ -175,14 +175,30 @@ def test_initialize_updates_a_drifted_prompt_then_becomes_idempotent(
     assert gateway.registered_prompts == [prompt]
 
 
-def test_duplicate_global_prompt_name_is_rejected_before_initialization(
+def test_prompt_names_are_scoped_by_project(
     tmp_path: Path,
 ) -> None:
     _write_prompt(tmp_path / "FIRST_PROJECT" / "SHARED_NAME.yaml")
     _write_prompt(tmp_path / "SECOND_PROJECT" / "SHARED_NAME.yaml")
 
-    with pytest.raises(InitializationError, match="already owned"):
-        load_project_definitions(tmp_path)
+    projects = load_project_definitions(tmp_path)
+
+    assert tuple(project.project_name for project in projects) == (
+        "FIRST_PROJECT",
+        "SECOND_PROJECT",
+    )
+    assert all(
+        tuple(prompt.prompt_name for prompt in project.prompts) == ("SHARED_NAME",)
+        for project in projects
+    )
+
+    report = initialize_prompt_catalog(projects, FakePromptRunner())
+
+    assert report.created_projects == ("FIRST_PROJECT", "SECOND_PROJECT")
+    assert report.created_prompts == (
+        "FIRST_PROJECT/SHARED_NAME",
+        "SECOND_PROJECT/SHARED_NAME",
+    )
 
 
 def test_prompt_name_must_form_a_stable_output_variable(tmp_path: Path) -> None:

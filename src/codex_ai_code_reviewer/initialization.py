@@ -195,7 +195,6 @@ def load_project_definitions(config_root: Path) -> tuple[ProjectDefinition, ...]
         )
 
     projects: list[ProjectDefinition] = []
-    prompt_owners: dict[str, Path] = {}
     project_paths = sorted(path for path in config_root.iterdir() if path.is_dir())
     if not project_paths:
         raise InitializationError(f"No project directories found in {config_root}")
@@ -211,15 +210,6 @@ def load_project_definitions(config_root: Path) -> tuple[ProjectDefinition, ...]
             for prompt_path in sorted(project_path.glob("*.yaml"))
             if prompt_path.is_file()
         )
-        for prompt in prompts:
-            previous_owner = prompt_owners.setdefault(
-                prompt.prompt_name, prompt.source_path
-            )
-            if previous_owner != prompt.source_path:
-                raise InitializationError(
-                    f"{prompt.source_path}: prompt name {prompt.prompt_name!r} is already owned by "
-                    f"{previous_owner}"
-                )
         projects.append(ProjectDefinition(project_name, prompts))
 
     return tuple(projects)

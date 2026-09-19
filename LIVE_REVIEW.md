@@ -5,6 +5,8 @@ may be noticed or investigated.
 
 - Follow the run from prompt initialization through every specialist and the final
   comparison. Observe real actions rather than merely waiting for completion.
+- Label the run as `original` / `CODEX_AI_CODE_REVIEW` or
+  `v2` / `CODEX_AI_CODE_REVIEW_V2` before interpreting its event stream.
 - Map each prompt name to its invocation ID, execution run ID, and isolated
   workspace as soon as the runner advertises them.
 - When reconnaissance supplies specialist questions, verify that every required
@@ -34,7 +36,8 @@ may be noticed or investigated.
 - For the comparison stage, examine whether it receives the complete specialist
   evidence, validates claims against code and tests, handles disagreement, rejects
   weak findings, preserves strengths, and produces a defensible priority order.
-- After completion, verify the v2 success result, sortable UTC report directory,
+- After completion, verify the v3 success result and its `prompt_version` and
+  `prompt_project`, the sortable UTC report directory,
   seven correctly named nonempty report files, specialist identities, and target
   repository cleanliness.
 - Record whether each report came from one `outputs/*.md` file or the final-turn

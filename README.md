@@ -16,6 +16,8 @@ checkout. Override the runner location with `CODEX_PROMPT_RUNNER_PROJECT_ROOT`.
 ```bash
 uv sync --locked --group dev
 ./run_the_code_review /absolute/or/relative/repository
+./run_the_code_review --prompt-version original /repository
+./run_the_code_review --prompt-version v2 /repository
 ./run_the_code_review --model gpt-5.6-luna --reasoning max /repository
 ./run_the_code_review /repository --model gpt-5.6-luna --reasoning max
 ./run_the_code_review --reports-directory /archive/code-reviews /repository
@@ -26,14 +28,17 @@ working directory of the Bash launcher and Python reviewer process, the Prompt R
 `--cwd`, and the `ARG_DIRECTORY` runtime variable. Tool-enabled Prompt Runner profiles
 execute Codex inside a safety-created isolated workspace derived from that directory;
 the original target path and isolated execution workspace are intentionally distinct.
-`--model` and `--reasoning` apply to every specialist and the comparison for that run
-without changing the defaults stored in prompt YAML or the Prompt Runner catalogue.
+The default `--prompt-version original` selects `CODEX_AI_CODE_REVIEW`; `v2` selects
+the separate `CODEX_AI_CODE_REVIEW_V2` project. `--model` and `--reasoning` apply to
+every specialist and the comparison for that run without changing the defaults
+stored in prompt YAML or the Prompt Runner catalogue.
 Reports default to this project's `reports/` directory. A relative
 `--reports-directory` is resolved from the directory where the launcher was invoked.
 
 ## Pipeline
 
-1. Validate repository-owned YAML and synchronize the Prompt Runner catalogue.
+1. Select and validate the original or V2 on-disk prompt project, then synchronize
+   both projects with the Prompt Runner catalogue.
 2. Consume each Prompt Runner JSONL event stream as it arrives. When an executing
    event carries `isolated_workspace`, call `create_runner_work_space()` to create
    that workspace, a `source_code_read_only_link` symlink to the reviewed directory,
@@ -89,19 +94,23 @@ remain isolated from the source repository by Prompt Runner.
 
 ## Configuration
 
-- `conf/projects/<PROJECT>/<PROMPT>.yaml` owns prompt text and execution policy.
+- `conf/projects/CODEX_AI_CODE_REVIEW/` is the original prompt project;
+  `conf/projects/CODEX_AI_CODE_REVIEW_V2/` is V2. Their prompt YAML is intentionally
+  identical so the version boundary cannot silently change shared orchestration.
+- `conf/projects/<PROJECT>/vars/<VARIABLE>.yaml` owns that version's six specialist
+  lens values. Both projects use the same unsuffixed variable names; project-local
+  values overlay the shared variables only for the selected run.
 - Invocation-level `--model` and `--reasoning` values override only their corresponding
   YAML defaults; risk profiles continue to come from YAML.
 - The current YAML defaults use `gpt-6-astra`: reconnaissance and the six specialists
   use `xhigh` reasoning, while final comparison uses `max` reasoning.
-- `conf/vars/<VARIABLE>.yaml` owns reusable string values.
+- `conf/vars/<VARIABLE>.yaml` owns values shared by both prompt projects.
 - Reconnaissance uses its self-contained survey instructions without `ANALYZE_HEADER`;
   the six deep specialists use the shared defect-analysis instructions. That shared
   header currently includes `TRACE_PROBLEM`, which asks each specialist to establish
   the root cause and supporting evidence without implementing a fix.
-- The six `*_SPECIALIST_V2` variables are stored alternative lens definitions. The
-  active specialist prompts continue to reference the original unsuffixed variables
-  until their prompt mappings are deliberately changed.
+- `--prompt-version` changes the selected on-disk project only. Model and reasoning
+  overrides remain independent of prompt version.
 - The comparison prompt encourages a single `outputs/final_report.md`; the runtime
   still accepts any single non-empty Markdown file or its documented final-message
   fallback.
@@ -115,9 +124,10 @@ remain isolated from the source repository by Prompt Runner.
   independent of parallel completion order.
 - `REVIEW_DIRECTORY_CONTEXT` injects the same target boundary into all active prompts.
 
-The v2 result contract is [docs/contracts/code-review-result.schema.json](docs/contracts/code-review-result.schema.json).
-It exposes `report_project_name`, `report_run_id`, `report_directory`, and a complete
-`report_paths` map. `specialist_reviews` contains the six deep specialist reports.
+The v3 result contract is [docs/contracts/code-review-result.schema.json](docs/contracts/code-review-result.schema.json).
+It records `prompt_version` and `prompt_project` alongside `report_project_name`,
+`report_run_id`, `report_directory`, and a complete `report_paths` map.
+`specialist_reviews` contains the six deep specialist reports.
 Reconnaissance remains an intermediate question-generation stage and is not a
 published report.
 Machine-readable ownership and workflow records are under `docs/architecture/modules/`
