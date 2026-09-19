@@ -96,7 +96,15 @@ remain isolated from the source repository by Prompt Runner.
   use `xhigh` reasoning, while final comparison uses `max` reasoning.
 - `conf/vars/<VARIABLE>.yaml` owns reusable string values.
 - Reconnaissance uses its self-contained survey instructions without `ANALYZE_HEADER`;
-  the six deep specialists use the shared defect-analysis instructions.
+  the six deep specialists use the shared defect-analysis instructions. That shared
+  header currently includes `TRACE_PROBLEM`, which asks each specialist to establish
+  the root cause and supporting evidence without implementing a fix.
+- The six `*_SPECIALIST_V2` variables are stored alternative lens definitions. The
+  active specialist prompts continue to reference the original unsuffixed variables
+  until their prompt mappings are deliberately changed.
+- The comparison prompt encourages a single `outputs/final_report.md`; the runtime
+  still accepts any single non-empty Markdown file or its documented final-message
+  fallback.
 - Repository variables may reference `{{VAR:NAME}}`; missing references and cycles
   fail before execution.
 - `ARG_DIRECTORY`, `QUESTIONS`, and every `<PROMPT_NAME>_OUTPUT` are reserved runtime
