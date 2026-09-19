@@ -36,8 +36,9 @@ Reports default to this project's `reports/` directory. A relative
 1. Validate repository-owned YAML and synchronize the Prompt Runner catalogue.
 2. Consume each Prompt Runner JSONL event stream as it arrives. When an executing
    event carries `isolated_workspace`, call `create_runner_work_space()` to create
-   that workspace, `final_reports/`, `tmp/`, `temp_scripts/`, `scratch_pad/`, and
-   `README.md`. The function returns `1` on success and `0` on failure.
+   that workspace, a `source_code_read_only_link` symlink to the reviewed directory,
+   `final_reports/`, `tmp/`, `temp_scripts/`, `scratch_pad/`, and `README.md`. The
+   function returns `1` on success and `0` on failure.
 3. Run `ANALYZE_PIPELINE`, `ANALYZE_BOUNDARIES`, `ANALYZE_NETWORKING`,
    `ANALYZE_INTEGRITY`, `ANALYZE_SECURITY`, and `ANALYZE_PERFORMANCE` in parallel.
 4. Publish each successful result internally as `{{VAR:<PROMPT_NAME>_OUTPUT}}`.

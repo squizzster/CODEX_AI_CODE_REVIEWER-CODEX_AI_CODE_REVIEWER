@@ -32,7 +32,7 @@ data:
     - reviewed directory through Prompt Runner
   writes:
     - Prompt Runner catalogue state
-    - Prompt Runner isolated-workspace/{final_reports,tmp,temp_scripts,scratch_pad,README.md}
+    - Prompt Runner isolated-workspace/{source_code_read_only_link,final_reports,tmp,temp_scripts,scratch_pad,README.md}
     - reports/<project_name>/<review_started_at_utc> after successful comparison
 verification:
   - uv run pytest
@@ -62,6 +62,7 @@ extensions:
       pipeline: parse one JSONL event, invoke its handler, then forward it to stderr
       workspace_trigger: initial executing event containing isolated_workspace
       workspace_operation: create_runner_work_space returns 1 or 0
+      source_code_link: source_code_read_only_link -> reviewed directory
       workspace_directories:
         - final_reports
         - tmp

@@ -495,6 +495,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             live_event_handler=partial(
                 create_runner_work_space_from_event,
                 _workspace_readmes(analysis_prompts, variable_values),
+                review_directory,
             ),
         )
         report = initialize_prompt_catalog(projects, runner)
