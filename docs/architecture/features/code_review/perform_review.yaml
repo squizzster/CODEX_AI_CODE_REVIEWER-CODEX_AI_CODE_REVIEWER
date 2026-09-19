@@ -33,7 +33,7 @@ data:
     - reviewed directory through Prompt Runner
   writes:
     - Prompt Runner catalogue state
-    - Prompt Runner isolated-workspace/{source_code_read_only_link,outputs,final_reports_md,tmp,temp_scripts,scratch_pad,README.md}
+    - Prompt Runner isolated-workspace/{source_code_read_only_link,outputs,final_md_report,tmp,temp_scripts,scratch_pad,README.md}
     - reports/<project_name>/<review_started_at_utc> after successful comparison
 verification:
   - uv run pytest
@@ -69,7 +69,7 @@ extensions:
         - tmp
         - temp_scripts
         - scratch_pad
-      final_reports_link: final_reports_md -> outputs
+      final_report_link: final_md_report -> outputs
       output_contract:
         scan: direct children of outputs
         markdown_files_required: exactly_one
