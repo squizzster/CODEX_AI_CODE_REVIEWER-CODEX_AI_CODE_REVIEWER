@@ -37,14 +37,18 @@ Reports default to this project's `reports/` directory. A relative
 2. Consume each Prompt Runner JSONL event stream as it arrives. When an executing
    event carries `isolated_workspace`, call `create_runner_work_space()` to create
    that workspace, a `source_code_read_only_link` symlink to the reviewed directory,
-   `final_reports/`, `tmp/`, `temp_scripts/`, `scratch_pad/`, and `README.md`. The
-   function returns `1` on success and `0` on failure.
+   the real `outputs/` directory, a `final_reports_md -> outputs` symlink, `tmp/`,
+   `temp_scripts/`, `scratch_pad/`, and `README.md`. The function returns `1` on
+   success and `0` on failure.
 3. Run `ANALYZE_PIPELINE`, `ANALYZE_BOUNDARIES`, `ANALYZE_NETWORKING`,
    `ANALYZE_INTEGRITY`, `ANALYZE_SECURITY`, and `ANALYZE_PERFORMANCE` in parallel.
-4. Publish each successful result internally as `{{VAR:<PROMPT_NAME>_OUTPUT}}`.
+4. After each successful execution, scan its real `outputs/` directory, require
+   exactly one non-empty regular Markdown file, and publish that file's content
+   internally as `{{VAR:<PROMPT_NAME>_OUTPUT}}`.
 5. Run `COMPARE_AGENT_REPORTS` only after all specialist reports succeed, with each
-   report bound by prompt identity rather than completion order.
-6. Atomically publish all seven Markdown reports under
+   complete file-backed report bound by prompt identity rather than completion order.
+6. Apply the same one-Markdown-file contract to `COMPARE_AGENT_REPORTS`, then
+   atomically publish all seven Markdown reports under
    `reports/<project_name>/<review_started_at_utc>/` and emit the complete
    versioned result as one JSON object on stdout.
 
@@ -53,6 +57,10 @@ original JSONL record to stderr. Cached results and custom executors legitimatel
 `isolated_workspace`, so they do not trigger workspace initialization. Expected input,
 configuration, catalogue, execution, and publication failures return exit code `2`;
 no report directory is published from an incomplete pipeline.
+
+The Prompt Runner's small final-message `output` remains in each review record as an
+execution handoff. It is not used as specialist evidence in the comparison and is not
+published in place of the Markdown report from `outputs/`.
 
 Each published filename follows `<PROMPT_NAME>_OUTPUT.md`, including
 `ANALYZE_SECURITY_OUTPUT.md` and `COMPARE_AGENT_REPORTS_OUTPUT.md`. The comparison

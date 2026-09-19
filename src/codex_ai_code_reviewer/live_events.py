@@ -10,8 +10,10 @@ from codex_ai_code_reviewer.initialization import InitializationError
 
 LIVE_EVENT_SCHEMA = "codex-prompt-runner.live-event/v1"
 SOURCE_CODE_LINK_NAME = "source_code_read_only_link"
+FINAL_REPORTS_LINK_NAME = "final_reports_md"
+OUTPUT_DIRECTORY_NAME = "outputs"
 WORKSPACE_DIRECTORY_NAMES = (
-    "final_reports",
+    OUTPUT_DIRECTORY_NAME,
     "tmp",
     "temp_scripts",
     "scratch_pad",
@@ -30,6 +32,8 @@ def create_runner_work_space(
         workspace.mkdir(mode=0o700, parents=True, exist_ok=True)
         for directory_name in WORKSPACE_DIRECTORY_NAMES:
             (workspace / directory_name).mkdir(mode=0o700, exist_ok=True)
+        final_reports_link = workspace / FINAL_REPORTS_LINK_NAME
+        final_reports_link.symlink_to(OUTPUT_DIRECTORY_NAME, target_is_directory=True)
         source_code_link = workspace / SOURCE_CODE_LINK_NAME
         source_code_link.symlink_to(source_code_directory, target_is_directory=True)
         (workspace / "README.md").write_text(
@@ -39,6 +43,9 @@ def create_runner_work_space(
         return int(
             workspace.is_dir()
             and all((workspace / name).is_dir() for name in WORKSPACE_DIRECTORY_NAMES)
+            and final_reports_link.is_symlink()
+            and final_reports_link.resolve()
+            == (workspace / OUTPUT_DIRECTORY_NAME).resolve()
             and source_code_link.is_symlink()
             and source_code_link.resolve() == source_code_directory
             and (workspace / "README.md").is_file()

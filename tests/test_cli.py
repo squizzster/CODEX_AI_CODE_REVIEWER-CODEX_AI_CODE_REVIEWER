@@ -26,6 +26,7 @@ from codex_ai_code_reviewer.cli import (
     _publish_reports,
     _require_expected_execution,
     _require_pipeline_variable_contract,
+    _require_workspace_report_output,
     _review_directory,
     _review_run_id,
     _run_review_pipeline,
@@ -74,7 +75,8 @@ def _successful_review(
 
 
 class ParallelReviewRunner:
-    def __init__(self) -> None:
+    def __init__(self, workspace_root: Path) -> None:
+        self._workspace_root = workspace_root
         self._specialist_start = Barrier(len(SPECIALIST_PROMPTS))
         self._lock = Lock()
         self._completion_order = tuple(reversed(SPECIALIST_PROMPTS))
@@ -101,28 +103,44 @@ class ParallelReviewRunner:
         with self._lock:
             self.calls.append(prompt_name)
             self.execution_options.append((prompt_name, model, reasoning_effort))
+        workspace = self._workspace_root / prompt_name
+        output_directory = workspace / "outputs"
+        output_directory.mkdir(parents=True)
         if prompt_name in SPECIALIST_PROMPTS:
             self._specialist_start.wait(timeout=2)
             completion_index = self._completion_order.index(prompt_name)
             if completion_index:
                 previous_prompt = self._completion_order[completion_index - 1]
                 assert self._completion_events[previous_prompt].wait(timeout=2)
+            report = (
+                f"Detailed report from {prompt_name}; "
+                "literal {{VAR:ARG_DIRECTORY}}"
+            )
+            (output_directory / "specialist-review.md").write_text(
+                report, encoding="utf-8"
+            )
             review = _successful_review(
-                f"Report from {prompt_name}; literal {{{{VAR:ARG_DIRECTORY}}}}",
+                f"Handoff from {prompt_name}",
                 model=model or "gpt-6-astra",
                 reasoning_effort=reasoning_effort or "xhigh",
             )
+            review["isolated_workspace"] = str(workspace)
             with self._lock:
                 self.specialist_completion_order.append(prompt_name)
             self._completion_events[prompt_name].set()
             return review
         assert prompt_name == COMPARISON_PROMPT
         self.comparison_variables = variables
-        return _successful_review(
+        (output_directory / "integrated-review.md").write_text(
+            "Integrated detailed review", encoding="utf-8"
+        )
+        review = _successful_review(
             "Audited final review",
             model=model or "gpt-6-astra",
             reasoning_effort=reasoning_effort or "xhigh",
         )
+        review["isolated_workspace"] = str(workspace)
+        return review
 
 
 @pytest.mark.parametrize(
@@ -384,6 +402,63 @@ def test_execution_override_becomes_the_expected_runtime_policy(tmp_path: Path) 
         _require_expected_execution(result, prompt, overrides)
 
 
+def test_workspace_report_is_the_authoritative_prompt_output(tmp_path: Path) -> None:
+    prompt = _prompt_definitions(tmp_path)["ANALYZE_PIPELINE"]
+    workspace = tmp_path / "isolated-workspace"
+    outputs = workspace / "outputs"
+    outputs.mkdir(parents=True)
+    (outputs / "probe-results.jsonl").write_text("{}\n", encoding="utf-8")
+    (outputs / "pipeline-review.md").write_text(
+        "Complete pipeline report\n", encoding="utf-8"
+    )
+    review = _successful_review("Small completion handoff")
+    review["isolated_workspace"] = str(workspace)
+
+    assert (
+        _require_workspace_report_output(review, prompt)
+        == "Complete pipeline report\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("reports", "message"),
+    [
+        ({}, "found 0"),
+        ({"one.md": "one", "two.md": "two"}, "found 2"),
+        ({"empty.md": "  \n"}, "is empty"),
+    ],
+)
+def test_workspace_report_requires_exactly_one_nonempty_markdown_file(
+    tmp_path: Path, reports: dict[str, str], message: str
+) -> None:
+    prompt = _prompt_definitions(tmp_path)["ANALYZE_PIPELINE"]
+    workspace = tmp_path / "isolated-workspace"
+    outputs = workspace / "outputs"
+    outputs.mkdir(parents=True)
+    for name, content in reports.items():
+        (outputs / name).write_text(content, encoding="utf-8")
+    review = _successful_review("Small completion handoff")
+    review["isolated_workspace"] = str(workspace)
+
+    with pytest.raises(InitializationError, match=message):
+        _require_workspace_report_output(review, prompt)
+
+
+def test_workspace_report_rejects_a_markdown_symlink(tmp_path: Path) -> None:
+    prompt = _prompt_definitions(tmp_path)["ANALYZE_PIPELINE"]
+    workspace = tmp_path / "isolated-workspace"
+    outputs = workspace / "outputs"
+    outputs.mkdir(parents=True)
+    outside_report = tmp_path / "outside.md"
+    outside_report.write_text("outside", encoding="utf-8")
+    (outputs / "report.md").symlink_to(outside_report)
+    review = _successful_review("Small completion handoff")
+    review["isolated_workspace"] = str(workspace)
+
+    with pytest.raises(InitializationError, match="regular file"):
+        _require_workspace_report_output(review, prompt)
+
+
 @pytest.mark.parametrize("missing_prompt", ANALYSIS_PROMPTS)
 def test_analysis_configuration_requires_every_pipeline_prompt(
     tmp_path: Path, missing_prompt: str
@@ -480,7 +555,7 @@ def test_comparison_prompt_uses_named_specialist_output_variables() -> None:
 def test_review_pipeline_runs_specialists_in_parallel_then_compares_reports(
     tmp_path: Path,
 ) -> None:
-    runner = ParallelReviewRunner()
+    runner = ParallelReviewRunner(tmp_path)
     prompts = _prompt_definitions(tmp_path)
 
     result = _run_review_pipeline(
@@ -501,7 +576,8 @@ def test_review_pipeline_runs_specialists_in_parallel_then_compares_reports(
         variable_name = prompt_output_variable_name(prompt_name)
         assert (
             runner.comparison_variables[variable_name]
-            == f"Report from {prompt_name}; literal {{{{VAR:ARG_DIRECTORY}}}}"
+            == f"Detailed report from {prompt_name}; literal "
+            "{{VAR:ARG_DIRECTORY}}"
         )
     assert not any(
         variable_name.startswith("AGENT_")
@@ -510,11 +586,12 @@ def test_review_pipeline_runs_specialists_in_parallel_then_compares_reports(
     assert result.prompt_output_variables == {
         **{
             prompt_output_variable_name(prompt_name): (
-                f"Report from {prompt_name}; literal {{{{VAR:ARG_DIRECTORY}}}}"
+                f"Detailed report from {prompt_name}; "
+                "literal {{VAR:ARG_DIRECTORY}}"
             )
             for prompt_name in SPECIALIST_PROMPTS
         },
-        "COMPARE_AGENT_REPORTS_OUTPUT": "Audited final review",
+        "COMPARE_AGENT_REPORTS_OUTPUT": "Integrated detailed review",
     }
 
 
@@ -526,7 +603,7 @@ def test_pipeline_rejects_a_misspelled_or_unavailable_output_reference(
         prompts[COMPARISON_PROMPT],
         template="{{VAR:ANALYZE_PIPELINE_OUTPUTT}}",
     )
-    runner = ParallelReviewRunner()
+    runner = ParallelReviewRunner(tmp_path)
 
     with pytest.raises(
         InitializationError,
@@ -556,7 +633,7 @@ def test_pipeline_rejects_caller_supplied_prompt_output(tmp_path: Path) -> None:
 
 
 def test_review_pipeline_applies_overrides_to_every_execution(tmp_path: Path) -> None:
-    runner = ParallelReviewRunner()
+    runner = ParallelReviewRunner(tmp_path)
 
     _run_review_pipeline(
         runner,

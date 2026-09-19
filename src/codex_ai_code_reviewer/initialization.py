@@ -436,7 +436,7 @@ class PromptRunnerCli:
                 self._live_event_stream.write("\n")
             self._live_event_stream.flush()
 
-    def _consume_live_event(self, prompt_name: str, line: str) -> None:
+    def _consume_live_event(self, prompt_name: str, line: str) -> dict[str, Any]:
         """Run the single parse, handle, and forward pipeline for one event."""
 
         try:
@@ -445,6 +445,7 @@ class PromptRunnerCli:
                 self._live_event_handler(prompt_name, event)
         finally:
             self._forward_live_event(line)
+        return event
 
     @staticmethod
     def _stop_live_process(process: subprocess.Popen[str]) -> None:
@@ -611,6 +612,7 @@ class PromptRunnerCli:
             command.extend(("--var", f"{name}={value}"))
         command.extend(("--cwd", str(working_directory), "--live", "--detail"))
         process: subprocess.Popen[str] | None = None
+        isolated_workspace: str | None = None
         try:
             with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stdout:
                 process = subprocess.Popen(
@@ -624,7 +626,10 @@ class PromptRunnerCli:
                 )
                 assert process.stderr is not None
                 for line in process.stderr:
-                    self._consume_live_event(prompt_name, line)
+                    event = self._consume_live_event(prompt_name, line)
+                    workspace_value = event.get("isolated_workspace")
+                    if isinstance(workspace_value, str) and workspace_value:
+                        isolated_workspace = workspace_value
                 return_code = process.wait()
                 stdout.seek(0)
                 result_stdout = stdout.read()
@@ -646,6 +651,10 @@ class PromptRunnerCli:
             raise InitializationError(
                 "Prompt Runner returned a non-object run JSON document"
             )
-        return self._require_success(
+        result = self._require_success(
             _CommandResult(return_code, payload, "forwarded to stderr")
         )
+        if isolated_workspace is not None:
+            result = dict(result)
+            result["isolated_workspace"] = isolated_workspace
+        return result

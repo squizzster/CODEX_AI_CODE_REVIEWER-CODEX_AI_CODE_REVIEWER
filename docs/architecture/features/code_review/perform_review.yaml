@@ -19,6 +19,7 @@ outcomes:
   - one reports/<project_name>/<review_started_at_utc>/ directory
   - one <PROMPT_NAME>_OUTPUT.md file for each specialist and the comparison
   - each completed prompt owns one run-local <PROMPT_NAME>_OUTPUT variable
+  - each prompt output variable contains the one Markdown report found in that prompt's outputs directory
   - each stock-executor workspace is initialized from its first location-bearing live event
 failures:
   - invalid directory, configuration, or variable graph returns exit code 2
@@ -32,7 +33,7 @@ data:
     - reviewed directory through Prompt Runner
   writes:
     - Prompt Runner catalogue state
-    - Prompt Runner isolated-workspace/{source_code_read_only_link,final_reports,tmp,temp_scripts,scratch_pad,README.md}
+    - Prompt Runner isolated-workspace/{source_code_read_only_link,outputs,final_reports_md,tmp,temp_scripts,scratch_pad,README.md}
     - reports/<project_name>/<review_started_at_utc> after successful comparison
 verification:
   - uv run pytest
@@ -64,13 +65,19 @@ extensions:
       workspace_operation: create_runner_work_space returns 1 or 0
       source_code_link: source_code_read_only_link -> reviewed directory
       workspace_directories:
-        - final_reports
+        - outputs
         - tmp
         - temp_scripts
         - scratch_pad
+      final_reports_link: final_reports_md -> outputs
+      output_contract:
+        scan: direct children of outputs
+        markdown_files_required: exactly_one
+        file_requirements: nonempty regular file, not a symlink
+        prompt_runner_final_message: retained as execution metadata, excluded from comparison evidence
       workspace_readme: resolved specialist instruction or comparison prompt
       cached_result_creates_workspace: false
-      custom_executor_without_isolated_workspace: accepted_without_initialization
+      custom_executor_without_isolated_workspace: event accepted, review fails the file-output contract
     default_model: gpt-6-astra
     default_reasoning_effort: xhigh
     invocation_overrides_apply_to_all_prompts: true

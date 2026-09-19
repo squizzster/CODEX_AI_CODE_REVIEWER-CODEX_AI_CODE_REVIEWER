@@ -32,7 +32,10 @@ from codex_ai_code_reviewer.initialization import (
     prompt_output_variable_name,
     variable_reference_names,
 )
-from codex_ai_code_reviewer.live_events import create_runner_work_space_from_event
+from codex_ai_code_reviewer.live_events import (
+    OUTPUT_DIRECTORY_NAME,
+    create_runner_work_space_from_event,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_ROOT = PROJECT_ROOT / "conf" / "projects"
@@ -218,6 +221,8 @@ def _require_expected_execution(
 
 
 def _require_report_output(review: dict[str, Any], prompt: PromptDefinition) -> str:
+    """Require the agent's small final-message handoff."""
+
     output = review.get("output")
     if not isinstance(output, str) or not output.strip():
         raise InitializationError(
@@ -225,6 +230,57 @@ def _require_report_output(review: dict[str, Any], prompt: PromptDefinition) -> 
             f"{prompt.project_name}/{prompt.prompt_name}"
         )
     return output
+
+
+def _require_workspace_report_output(
+    review: dict[str, Any], prompt: PromptDefinition
+) -> str:
+    """Read the one authoritative Markdown report from the agent workspace."""
+
+    workspace_value = review.get("isolated_workspace")
+    if not isinstance(workspace_value, str) or not workspace_value:
+        raise InitializationError(
+            f"Prompt Runner returned no isolated workspace for "
+            f"{prompt.project_name}/{prompt.prompt_name}"
+        )
+    workspace = Path(workspace_value)
+    output_directory = workspace / OUTPUT_DIRECTORY_NAME
+    try:
+        if output_directory.is_symlink() or not output_directory.is_dir():
+            raise InitializationError(
+                f"Prompt produced no real {OUTPUT_DIRECTORY_NAME}/ directory for "
+                f"{prompt.project_name}/{prompt.prompt_name}"
+            )
+        markdown_paths = sorted(
+            path
+            for path in output_directory.iterdir()
+            if path.name.lower().endswith(".md")
+        )
+    except OSError as error:
+        raise InitializationError(
+            f"Cannot scan {OUTPUT_DIRECTORY_NAME}/ for "
+            f"{prompt.project_name}/{prompt.prompt_name}: {error}"
+        ) from error
+    if len(markdown_paths) != 1:
+        raise InitializationError(
+            f"Prompt must produce exactly one Markdown file in "
+            f"{output_directory}; found {len(markdown_paths)}"
+        )
+    report_path = markdown_paths[0]
+    if report_path.is_symlink() or not report_path.is_file():
+        raise InitializationError(
+            f"Prompt report must be a regular file inside {output_directory}: "
+            f"{report_path.name}"
+        )
+    try:
+        report = report_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise InitializationError(
+            f"Cannot read prompt report {report_path}: {error}"
+        ) from error
+    if not report.strip():
+        raise InitializationError(f"Prompt report is empty: {report_path}")
+    return report
 
 
 def _require_pipeline_variable_contract(
@@ -313,12 +369,13 @@ def _run_review_pipeline(
                 review = future.result()
                 _require_expected_execution(review, prompt, overrides)
                 _require_report_output(review, prompt)
+                workspace_report = _require_workspace_report_output(review, prompt)
             except InitializationError as error:
                 failures[prompt_name] = f"{type(error).__name__}: {error}"
             else:
                 specialist_reviews[prompt_name] = review
                 prompt_output_variables[prompt_output_variable_name(prompt_name)] = (
-                    _require_report_output(review, prompt)
+                    workspace_report
                 )
 
     if failures:
@@ -345,8 +402,9 @@ def _run_review_pipeline(
     )
     comparison_prompt = prompts[COMPARISON_PROMPT]
     _require_expected_execution(comparison, comparison_prompt, overrides)
+    _require_report_output(comparison, comparison_prompt)
     prompt_output_variables[prompt_output_variable_name(COMPARISON_PROMPT)] = (
-        _require_report_output(comparison, comparison_prompt)
+        _require_workspace_report_output(comparison, comparison_prompt)
     )
     return ReviewPipelineResult(
         ordered_specialist_reviews,

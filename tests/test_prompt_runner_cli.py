@@ -156,7 +156,11 @@ def test_live_run_forwards_events_and_supplies_variables(
         working_directory=Path("/project"),
     )
 
-    assert result == {"delivery_mode": "LIVE", "output": "review"}
+    assert result == {
+        "delivery_mode": "LIVE",
+        "isolated_workspace": "/state/attempt/isolated-workspace",
+        "output": "review",
+    }
     assert consumed == [("ANALYZE_PIPELINE", event) for event in events]
     assert forwarded.getvalue() == "".join(
         json.dumps(event) + "\n" for event in events

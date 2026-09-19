@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from codex_ai_code_reviewer.live_events import (
+    FINAL_REPORTS_LINK_NAME,
+    OUTPUT_DIRECTORY_NAME,
     SOURCE_CODE_LINK_NAME,
     WORKSPACE_DIRECTORY_NAMES,
     create_runner_work_space,
@@ -30,7 +32,12 @@ def test_create_runner_work_space_creates_requested_contents(tmp_path: Path) -> 
 
     assert result == 1
     assert sorted(path.name for path in workspace.iterdir()) == sorted(
-        (*WORKSPACE_DIRECTORY_NAMES, SOURCE_CODE_LINK_NAME, "README.md")
+        (
+            *WORKSPACE_DIRECTORY_NAMES,
+            FINAL_REPORTS_LINK_NAME,
+            SOURCE_CODE_LINK_NAME,
+            "README.md",
+        )
     )
     for directory_name in WORKSPACE_DIRECTORY_NAMES:
         assert (workspace / directory_name).is_dir()
@@ -41,6 +48,10 @@ def test_create_runner_work_space_creates_requested_contents(tmp_path: Path) -> 
     source_code_link = workspace / SOURCE_CODE_LINK_NAME
     assert source_code_link.is_symlink()
     assert source_code_link.resolve() == source_code.resolve()
+    final_reports_link = workspace / FINAL_REPORTS_LINK_NAME
+    assert final_reports_link.is_symlink()
+    assert final_reports_link.readlink() == Path(OUTPUT_DIRECTORY_NAME)
+    assert final_reports_link.resolve() == (workspace / OUTPUT_DIRECTORY_NAME).resolve()
 
 
 def test_create_runner_work_space_returns_zero_when_creation_fails(
