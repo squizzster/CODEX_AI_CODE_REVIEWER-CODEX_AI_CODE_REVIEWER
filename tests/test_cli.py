@@ -660,6 +660,19 @@ def test_repository_specialists_use_their_named_lens_variables() -> None:
         )
 
 
+def test_reconnaissance_instructions_define_every_specialist_block(
+    tmp_path: Path,
+) -> None:
+    variables = compose_variable_values(
+        load_variable_definitions(VARIABLES_ROOT), tmp_path
+    )
+    instructions = variables["RECONNAISSANCE_SPECIALIST"]
+
+    for prompt_name in SPECIALIST_PROMPTS:
+        assert f"<{prompt_name}>" in instructions
+        assert f"</{prompt_name}>" in instructions
+
+
 def test_workspace_readmes_use_specialist_context_and_comparison_prompt(
     tmp_path: Path,
 ) -> None:
