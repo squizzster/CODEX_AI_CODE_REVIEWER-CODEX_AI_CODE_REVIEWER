@@ -74,12 +74,14 @@ class ParallelReviewRunner:
     def __init__(self) -> None:
         self._specialist_start = Barrier(len(SPECIALIST_PROMPTS))
         self._lock = Lock()
+        self._completion_order = tuple(reversed(SPECIALIST_PROMPTS))
+        self._completion_events = {
+            prompt_name: Event() for prompt_name in SPECIALIST_PROMPTS
+        }
         self.calls: list[str] = []
         self.execution_options: list[tuple[str, str | None, str | None]] = []
         self.comparison_variables: dict[str, str] | None = None
         self.specialist_completion_order: list[str] = []
-        self._networking_completed = Event()
-        self._boundaries_completed = Event()
 
     def run_prompt(
         self,
@@ -98,10 +100,10 @@ class ParallelReviewRunner:
             self.execution_options.append((prompt_name, model, reasoning_effort))
         if prompt_name in SPECIALIST_PROMPTS:
             self._specialist_start.wait(timeout=2)
-            if prompt_name == "ANALYZE_BOUNDARIES":
-                assert self._networking_completed.wait(timeout=2)
-            elif prompt_name == "ANALYZE_PIPELINE":
-                assert self._boundaries_completed.wait(timeout=2)
+            completion_index = self._completion_order.index(prompt_name)
+            if completion_index:
+                previous_prompt = self._completion_order[completion_index - 1]
+                assert self._completion_events[previous_prompt].wait(timeout=2)
             review = _successful_review(
                 f"Report from {prompt_name}; literal {{{{VAR:ARG_DIRECTORY}}}}",
                 model=model or "gpt-6-astra",
@@ -109,10 +111,7 @@ class ParallelReviewRunner:
             )
             with self._lock:
                 self.specialist_completion_order.append(prompt_name)
-            if prompt_name == "ANALYZE_NETWORKING":
-                self._networking_completed.set()
-            elif prompt_name == "ANALYZE_BOUNDARIES":
-                self._boundaries_completed.set()
+            self._completion_events[prompt_name].set()
             return review
         assert prompt_name == COMPARISON_PROMPT
         self.comparison_variables = variables
@@ -318,14 +317,17 @@ def test_execution_override_becomes_the_expected_runtime_policy(tmp_path: Path) 
         _require_expected_execution(result, prompt, overrides)
 
 
-def test_analysis_configuration_requires_every_pipeline_prompt(tmp_path: Path) -> None:
+@pytest.mark.parametrize("missing_prompt", ANALYSIS_PROMPTS)
+def test_analysis_configuration_requires_every_pipeline_prompt(
+    tmp_path: Path, missing_prompt: str
+) -> None:
     prompts = _prompt_definitions(tmp_path)
     project = ProjectDefinition(
         ANALYSIS_PROJECT,
-        tuple(prompts[name] for name in ANALYSIS_PROMPTS if name != COMPARISON_PROMPT),
+        tuple(prompts[name] for name in ANALYSIS_PROMPTS if name != missing_prompt),
     )
 
-    with pytest.raises(InitializationError, match=COMPARISON_PROMPT):
+    with pytest.raises(InitializationError, match=missing_prompt):
         _analysis_prompt_definitions((project,))
 
 
@@ -354,8 +356,36 @@ def test_repository_prompts_apply_the_intended_execution_profiles() -> None:
         "ANALYZE_PIPELINE": "BALANCED",
         "ANALYZE_BOUNDARIES": "BALANCED",
         "ANALYZE_NETWORKING": "NETWORKED_WORKSPACE",
+        "ANALYZE_INTEGRITY": "BALANCED",
+        "ANALYZE_SECURITY": "BALANCED",
+        "ANALYZE_PERFORMANCE": "BALANCED",
+        "ANALYZE_RECONNAISSANCE": "BALANCED",
         "COMPARE_AGENT_REPORTS": "NETWORKED_WORKSPACE",
     }
+
+
+def test_repository_specialists_use_their_named_lens_variables() -> None:
+    prompts = _analysis_prompt_definitions(load_project_definitions(CONFIG_ROOT))
+    lens_variable_by_prompt = {
+        "ANALYZE_PIPELINE": "PIPELINE_SPECIALIST",
+        "ANALYZE_BOUNDARIES": "BOUNDARIES_SPECIALIST",
+        "ANALYZE_NETWORKING": "NETWORKING_SPECIALIST",
+        "ANALYZE_INTEGRITY": "INTEGRITY_SPECIALIST",
+        "ANALYZE_SECURITY": "SECURITY_SPECIALIST",
+        "ANALYZE_PERFORMANCE": "PERFORMANCE_SPECIALIST",
+        "ANALYZE_RECONNAISSANCE": "RECONNAISSANCE_SPECIALIST",
+    }
+
+    for prompt_name, lens_variable in lens_variable_by_prompt.items():
+        expected_variables = {
+            "REVIEW_DIRECTORY_CONTEXT",
+            lens_variable,
+        }
+        if prompt_name != "ANALYZE_RECONNAISSANCE":
+            expected_variables.add("ANALYZE_HEADER")
+        assert variable_reference_names(prompts[prompt_name].template) == (
+            expected_variables
+        )
 
 
 def test_comparison_prompt_uses_named_specialist_output_variables() -> None:
@@ -363,9 +393,7 @@ def test_comparison_prompt_uses_named_specialist_output_variables() -> None:
 
     assert variable_reference_names(prompts[COMPARISON_PROMPT].template) == {
         "REVIEW_DIRECTORY_CONTEXT",
-        "ANALYZE_BOUNDARIES_OUTPUT",
-        "ANALYZE_PIPELINE_OUTPUT",
-        "ANALYZE_NETWORKING_OUTPUT",
+        *(prompt_output_variable_name(name) for name in SPECIALIST_PROMPTS),
     }
 
 
@@ -385,11 +413,7 @@ def test_review_pipeline_runs_specialists_in_parallel_then_compares_reports(
     assert tuple(result.specialist_reviews) == SPECIALIST_PROMPTS
     assert result.comparison_review["output"] == "Audited final review"
     assert runner.calls[-1] == COMPARISON_PROMPT
-    assert runner.specialist_completion_order == [
-        "ANALYZE_NETWORKING",
-        "ANALYZE_BOUNDARIES",
-        "ANALYZE_PIPELINE",
-    ]
+    assert runner.specialist_completion_order == list(reversed(SPECIALIST_PROMPTS))
     assert runner.comparison_variables is not None
     for prompt_name in SPECIALIST_PROMPTS:
         variable_name = prompt_output_variable_name(prompt_name)
@@ -397,24 +421,17 @@ def test_review_pipeline_runs_specialists_in_parallel_then_compares_reports(
             runner.comparison_variables[variable_name]
             == f"Report from {prompt_name}; literal {{{{VAR:ARG_DIRECTORY}}}}"
         )
-    assert (
-        not {
-            "AGENT_1_REPORT",
-            "AGENT_2_REPORT",
-            "AGENT_3_REPORT",
-        }
-        & runner.comparison_variables.keys()
+    assert not any(
+        variable_name.startswith("AGENT_")
+        for variable_name in runner.comparison_variables
     )
     assert result.prompt_output_variables == {
-        "ANALYZE_PIPELINE_OUTPUT": (
-            "Report from ANALYZE_PIPELINE; literal {{VAR:ARG_DIRECTORY}}"
-        ),
-        "ANALYZE_BOUNDARIES_OUTPUT": (
-            "Report from ANALYZE_BOUNDARIES; literal {{VAR:ARG_DIRECTORY}}"
-        ),
-        "ANALYZE_NETWORKING_OUTPUT": (
-            "Report from ANALYZE_NETWORKING; literal {{VAR:ARG_DIRECTORY}}"
-        ),
+        **{
+            prompt_output_variable_name(prompt_name): (
+                f"Report from {prompt_name}; literal {{{{VAR:ARG_DIRECTORY}}}}"
+            )
+            for prompt_name in SPECIALIST_PROMPTS
+        },
         "COMPARE_AGENT_REPORTS_OUTPUT": "Audited final review",
     }
 
