@@ -1,7 +1,7 @@
 schema_version: 1
 id: code-review.perform-review
 module: code-review
-purpose: Produce and persist six independent specialist reports and one audited comparison.
+purpose: Generate targeted review questions, then produce and persist six independent specialist reports and one audited comparison.
 status: active
 shape: workflow
 entrypoints:
@@ -18,7 +18,8 @@ outcomes:
   - versioned JSON result on stdout
   - one reports/<project_name>/<review_started_at_utc>/ directory
   - one <PROMPT_NAME>_OUTPUT.md file for each specialist and the comparison
-  - each completed prompt owns one run-local <PROMPT_NAME>_OUTPUT variable
+  - one reconnaissance question block routed exclusively to each matching specialist
+  - each report-producing prompt owns one run-local <PROMPT_NAME>_OUTPUT variable
   - each execution derives FINAL_OUTPUT_PRODUCED from its one Markdown report, falling back to the Prompt Runner final turn when none exists
   - each prompt output variable contains that execution's FINAL_OUTPUT_PRODUCED value
   - each stock-executor workspace is initialized from its first location-bearing live event
@@ -52,10 +53,13 @@ extensions:
     - ANALYZE_INTEGRITY
     - ANALYZE_SECURITY
     - ANALYZE_PERFORMANCE
-  disabled_specialist_prompts:
-    - ANALYZE_RECONNAISSANCE
+  reconnaissance_prompt: ANALYZE_RECONNAISSANCE
   comparison_prompt: COMPARE_AGENT_REPORTS
   execution:
+    stages:
+      - reconnaissance
+      - six_parallel_specialists
+      - comparison
     specialist_concurrency: 6
     comparison_requires_all_specialists: true
     prompt_delivery_mode: LIVE
@@ -98,6 +102,14 @@ extensions:
         - ANALYZE_INTEGRITY_OUTPUT
         - ANALYZE_SECURITY_OUTPUT
         - ANALYZE_PERFORMANCE_OUTPUT
+    reconnaissance_questions:
+      source: ANALYZE_RECONNAISSANCE FINAL_OUTPUT_PRODUCED
+      delimiters: <PROMPT_NAME>...</PROMPT_NAME>
+      required_blocks: 6
+      duplicate_or_missing_block: fail_before_specialists
+      specialist_variable: QUESTIONS
+      routing: each specialist receives only its identically named block
+      published_report: false
     report_publication:
       default_root: reports/
       directory_shape: <project_name>/<YYYY-MM-DDTHH-MM-SS.hundredthsZ>/

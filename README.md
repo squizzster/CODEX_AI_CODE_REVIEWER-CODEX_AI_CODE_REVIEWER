@@ -40,17 +40,21 @@ Reports default to this project's `reports/` directory. A relative
    the real `outputs/` directory, a `final_md_report -> outputs` symlink, `tmp/`,
    `temp_scripts/`, `scratch_pad/`, and `README.md`. The function returns `1` on
    success and `0` on failure.
-3. Run `ANALYZE_PIPELINE`, `ANALYZE_BOUNDARIES`, `ANALYZE_NETWORKING`,
+3. Run `ANALYZE_RECONNAISSANCE`, select its final output, and extract exactly one
+   complete named question block for each of the six specialists. An absent, empty,
+   or duplicate block fails before specialist execution.
+4. Run `ANALYZE_PIPELINE`, `ANALYZE_BOUNDARIES`, `ANALYZE_NETWORKING`,
    `ANALYZE_INTEGRITY`, `ANALYZE_SECURITY`, and `ANALYZE_PERFORMANCE` in parallel.
-4. After each successful execution, scan its real `outputs/` directory for Markdown
+   Each receives only its matching reconnaissance block as `{{VAR:QUESTIONS}}`.
+5. After each successful execution, scan its real `outputs/` directory for Markdown
    files. Other file types may coexist there. One non-empty regular Markdown file
    becomes that execution's `FINAL_OUTPUT_PRODUCED`; when no Markdown file exists,
    the Prompt Runner final turn becomes `FINAL_OUTPUT_PRODUCED`. More than one
    Markdown file, or neither source, fails. Publish the selected content internally
    as `{{VAR:<PROMPT_NAME>_OUTPUT}}`.
-5. Run `COMPARE_AGENT_REPORTS` only after all specialist reports succeed, with each
+6. Run `COMPARE_AGENT_REPORTS` only after all specialist reports succeed, with each
    complete file-backed report bound by prompt identity rather than completion order.
-6. Apply the same file-preferred, final-message-fallback selection to
+7. Apply the same file-preferred, final-message-fallback selection to
    `COMPARE_AGENT_REPORTS`, then
    atomically publish all seven Markdown reports under
    `reports/<project_name>/<review_started_at_utc>/` and emit the complete
@@ -73,8 +77,9 @@ report is stored with the others in a run directory identified by a sortable UTC
 such as `2026-09-19T15-47-45.12Z`;
 each review record retains its own Prompt Runner execution ID in the JSON result.
 
-`ANALYZE_RECONNAISSANCE` is temporarily disabled. Its prompt and specialist variable
-remain configured, but it is not executed or included in the comparison or result.
+`ANALYZE_RECONNAISSANCE` is a preparation stage rather than a seventh deep specialist.
+Its six named blocks direct the specialist investigations; its complete answer is not
+included in the comparison or the seven published reports.
 
 `ANALYZE_PIPELINE`, `ANALYZE_BOUNDARIES`, `ANALYZE_INTEGRITY`, and
 `ANALYZE_PERFORMANCE` use `BALANCED` execution. `ANALYZE_NETWORKING`,
@@ -92,7 +97,8 @@ remain isolated from the source repository by Prompt Runner.
   the six deep specialists use the shared defect-analysis instructions.
 - Repository variables may reference `{{VAR:NAME}}`; missing references and cycles
   fail before execution.
-- `ARG_DIRECTORY` and every `<PROMPT_NAME>_OUTPUT` are reserved runtime values.
+- `ARG_DIRECTORY`, `QUESTIONS`, and every `<PROMPT_NAME>_OUTPUT` are reserved runtime
+  values.
   Configured variables and callers cannot override them.
 - A prompt output becomes available only after that prompt succeeds. Specialist
   outputs remain opaque and are supplied to the comparison by stable prompt name,
@@ -101,8 +107,9 @@ remain isolated from the source repository by Prompt Runner.
 
 The v2 result contract is [docs/contracts/code-review-result.schema.json](docs/contracts/code-review-result.schema.json).
 It exposes `report_project_name`, `report_run_id`, `report_directory`, and a complete
-`report_paths` map. `specialist_reviews` contains the six active specialist reports;
-`ANALYZE_RECONNAISSANCE` and its output remain absent while that specialist is disabled.
+`report_paths` map. `specialist_reviews` contains the six deep specialist reports.
+Reconnaissance remains an intermediate question-generation stage and is not a
+published report.
 Machine-readable ownership and workflow records are under `docs/architecture/modules/`
 and `docs/architecture/features/`.
 

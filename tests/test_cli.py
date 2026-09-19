@@ -15,6 +15,9 @@ from codex_ai_code_reviewer.cli import (
     ANALYSIS_PROMPTS,
     COMPARISON_PROMPT,
     CONFIG_ROOT,
+    QUESTIONS_VARIABLE,
+    RECONNAISSANCE_PROMPT,
+    REPORT_PROMPTS,
     RESULT_SCHEMA,
     SPECIALIST_PROMPTS,
     SPECIALIST_VARIABLE_BY_PROMPT,
@@ -23,6 +26,7 @@ from codex_ai_code_reviewer.cli import (
     ReviewExecutionOverrides,
     _analysis_prompt_definitions,
     _enter_review_directory,
+    _extract_specialist_question_blocks,
     _final_output_produced,
     _parser,
     _publish_reports,
@@ -51,13 +55,24 @@ def _prompt_definitions(tmp_path: Path) -> dict[str, PromptDefinition]:
             project_name=ANALYSIS_PROJECT,
             prompt_name=prompt_name,
             source_path=tmp_path / f"{prompt_name}.yaml",
-            template=f"Run {prompt_name}",
+            template=(
+                f"{{{{VAR:{QUESTIONS_VARIABLE}}}}}\nRun {prompt_name}"
+                if prompt_name in SPECIALIST_PROMPTS
+                else f"Run {prompt_name}"
+            ),
             model="gpt-6-astra",
             reasoning_effort="xhigh",
             risk_profile="BALANCED",
         )
         for prompt_name in ANALYSIS_PROMPTS
     }
+
+
+def _reconnaissance_output() -> str:
+    return "\n\n".join(
+        f"<{prompt_name}>\n{prompt_name} focused question?\n</{prompt_name}>"
+        for prompt_name in SPECIALIST_PROMPTS
+    )
 
 
 def _successful_review(
@@ -87,6 +102,7 @@ class ParallelReviewRunner:
         self.calls: list[str] = []
         self.execution_options: list[tuple[str, str | None, str | None]] = []
         self.comparison_variables: dict[str, str] | None = None
+        self.specialist_questions: dict[str, str] = {}
         self.specialist_completion_order: list[str] = []
 
     def run_prompt(
@@ -107,7 +123,20 @@ class ParallelReviewRunner:
         workspace = self._workspace_root / prompt_name
         output_directory = workspace / "outputs"
         output_directory.mkdir(parents=True)
+        if prompt_name == RECONNAISSANCE_PROMPT:
+            (output_directory / "reconnaissance.md").write_text(
+                _reconnaissance_output(), encoding="utf-8"
+            )
+            review = _successful_review(
+                "Reconnaissance handoff",
+                model=model or "gpt-6-astra",
+                reasoning_effort=reasoning_effort or "xhigh",
+            )
+            review["isolated_workspace"] = str(workspace)
+            return review
         if prompt_name in SPECIALIST_PROMPTS:
+            with self._lock:
+                self.specialist_questions[prompt_name] = variables[QUESTIONS_VARIABLE]
             self._specialist_start.wait(timeout=2)
             completion_index = self._completion_order.index(prompt_name)
             if completion_index:
@@ -509,6 +538,58 @@ def test_workspace_report_rejects_a_markdown_symlink(tmp_path: Path) -> None:
         _final_output_produced(review, prompt)
 
 
+def test_reconnaissance_extracts_one_matching_block_per_specialist() -> None:
+    output = f"Survey introduction\n\n{_reconnaissance_output()}\n\nSurvey limits"
+
+    blocks = _extract_specialist_question_blocks(output)
+
+    assert tuple(blocks) == SPECIALIST_PROMPTS
+    for prompt_name, block in blocks.items():
+        assert block == (
+            f"<{prompt_name}>\n"
+            f"{prompt_name} focused question?\n"
+            f"</{prompt_name}>"
+        )
+        assert all(
+            f"<{other_prompt}>" not in block
+            for other_prompt in SPECIALIST_PROMPTS
+            if other_prompt != prompt_name
+        )
+
+
+@pytest.mark.parametrize(
+    ("output", "message"),
+    [
+        ("", "ANALYZE_PIPELINE has 0 opening and 0 closing tags"),
+        (
+            _reconnaissance_output()
+            + "\n<ANALYZE_PIPELINE>duplicate?</ANALYZE_PIPELINE>",
+            "ANALYZE_PIPELINE has 2 opening and 2 closing tags",
+        ),
+        (
+            _reconnaissance_output().replace(
+                "ANALYZE_INTEGRITY focused question?", "   "
+            ),
+            "ANALYZE_INTEGRITY has an empty questions block",
+        ),
+        (
+            _reconnaissance_output().replace(
+                "<ANALYZE_SECURITY>\nANALYZE_SECURITY focused question?\n"
+                "</ANALYZE_SECURITY>",
+                "</ANALYZE_SECURITY>\nANALYZE_SECURITY focused question?\n"
+                "<ANALYZE_SECURITY>",
+            ),
+            "ANALYZE_SECURITY closes before its questions block opens",
+        ),
+    ],
+)
+def test_reconnaissance_rejects_missing_duplicate_or_empty_blocks(
+    output: str, message: str
+) -> None:
+    with pytest.raises(InitializationError, match=message):
+        _extract_specialist_question_blocks(output)
+
+
 @pytest.mark.parametrize("missing_prompt", ANALYSIS_PROMPTS)
 def test_analysis_configuration_requires_every_pipeline_prompt(
     tmp_path: Path, missing_prompt: str
@@ -550,6 +631,7 @@ def test_repository_prompts_apply_the_intended_execution_profiles() -> None:
     assert {
         prompt_name: prompt.risk_profile for prompt_name, prompt in prompts.items()
     } == {
+        "ANALYZE_RECONNAISSANCE": "BALANCED",
         "ANALYZE_PIPELINE": "BALANCED",
         "ANALYZE_BOUNDARIES": "BALANCED",
         "ANALYZE_NETWORKING": "NETWORKED_WORKSPACE",
@@ -568,6 +650,7 @@ def test_repository_specialists_use_their_named_lens_variables() -> None:
 
     for prompt_name, lens_variable in SPECIALIST_VARIABLE_BY_PROMPT.items():
         expected_variables = {
+            QUESTIONS_VARIABLE,
             "REVIEW_DIRECTORY_CONTEXT",
             "ANALYZE_HEADER",
             lens_variable,
@@ -589,6 +672,9 @@ def test_workspace_readmes_use_specialist_context_and_comparison_prompt(
 
     assert set(readmes) == set(ANALYSIS_PROMPTS)
     appendix = variables[WORKSPACE_README_APPEND_VARIABLE].strip()
+    assert readmes[RECONNAISSANCE_PROMPT] == (
+        f"{variables['RECONNAISSANCE_SPECIALIST'].rstrip()}\n\n{appendix}"
+    )
     for prompt_name, variable_name in SPECIALIST_VARIABLE_BY_PROMPT.items():
         assert readmes[prompt_name] == (
             f"{variables[variable_name].rstrip()}\n\n{appendix}"
@@ -627,10 +713,13 @@ def test_review_pipeline_runs_specialists_in_parallel_then_compares_reports(
 
     assert tuple(result.specialist_reviews) == SPECIALIST_PROMPTS
     assert len(result.specialist_reviews) == 6
-    assert "ANALYZE_RECONNAISSANCE" not in runner.calls
+    assert runner.calls[0] == RECONNAISSANCE_PROMPT
     assert result.comparison_review["output"] == "Audited final review"
     assert runner.calls[-1] == COMPARISON_PROMPT
     assert runner.specialist_completion_order == list(reversed(SPECIALIST_PROMPTS))
+    assert runner.specialist_questions == _extract_specialist_question_blocks(
+        _reconnaissance_output()
+    )
     assert runner.comparison_variables is not None
     for prompt_name in SPECIALIST_PROMPTS:
         variable_name = prompt_output_variable_name(prompt_name)
@@ -679,7 +768,66 @@ def test_pipeline_rejects_a_misspelled_or_unavailable_output_reference(
     assert runner.calls == []
 
 
-def test_pipeline_rejects_caller_supplied_prompt_output(tmp_path: Path) -> None:
+def test_pipeline_requires_every_specialist_to_receive_questions(
+    tmp_path: Path,
+) -> None:
+    prompts = _prompt_definitions(tmp_path)
+    prompts["ANALYZE_SECURITY"] = replace(
+        prompts["ANALYZE_SECURITY"], template="Run ANALYZE_SECURITY"
+    )
+    runner = ParallelReviewRunner(tmp_path)
+
+    with pytest.raises(InitializationError, match="must reference QUESTIONS"):
+        _run_review_pipeline(
+            runner,
+            prompts,
+            variables={"ARG_DIRECTORY": str(tmp_path)},
+            working_directory=tmp_path,
+        )
+
+    assert runner.calls == []
+
+
+def test_invalid_reconnaissance_stops_before_specialists(tmp_path: Path) -> None:
+    prompts = _prompt_definitions(tmp_path)
+
+    class InvalidReconnaissanceRunner:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def run_prompt(
+            self,
+            project_name: str,
+            prompt_name: str,
+            *,
+            variables: dict[str, str],
+            working_directory: Path,
+            model: str | None = None,
+            reasoning_effort: str | None = None,
+        ) -> dict[str, Any]:
+            self.calls.append(prompt_name)
+            return _successful_review("No structured question blocks")
+
+    runner = InvalidReconnaissanceRunner()
+
+    with pytest.raises(InitializationError, match="Reconnaissance did not produce"):
+        _run_review_pipeline(
+            runner,
+            prompts,
+            variables={"ARG_DIRECTORY": str(tmp_path)},
+            working_directory=tmp_path,
+        )
+
+    assert runner.calls == [RECONNAISSANCE_PROMPT]
+
+
+@pytest.mark.parametrize(
+    "runtime_variable",
+    ["ANALYZE_PIPELINE_OUTPUT", QUESTIONS_VARIABLE],
+)
+def test_pipeline_rejects_caller_supplied_runtime_variable(
+    tmp_path: Path, runtime_variable: str
+) -> None:
     prompts = _prompt_definitions(tmp_path)
 
     with pytest.raises(InitializationError, match="generated at runtime"):
@@ -687,7 +835,7 @@ def test_pipeline_rejects_caller_supplied_prompt_output(tmp_path: Path) -> None:
             prompts,
             {
                 "ARG_DIRECTORY": str(tmp_path),
-                "ANALYZE_PIPELINE_OUTPUT": "spoofed or stale report",
+                runtime_variable: "spoofed or stale value",
             },
         )
 
@@ -730,6 +878,8 @@ def test_review_pipeline_does_not_compare_incomplete_specialist_reports(
             reasoning_effort: str | None = None,
         ) -> dict[str, Any]:
             self.calls.append(prompt_name)
+            if prompt_name == RECONNAISSANCE_PROMPT:
+                return _successful_review(_reconnaissance_output())
             output = "" if prompt_name == "ANALYZE_BOUNDARIES" else "Report"
             return _successful_review(output)
 
@@ -754,7 +904,7 @@ def test_reports_are_published_under_project_and_run_directories(
     review_directory.mkdir()
     outputs = {
         prompt_output_variable_name(prompt_name): f"Report from {prompt_name}"
-        for prompt_name in ANALYSIS_PROMPTS
+        for prompt_name in REPORT_PROMPTS
     }
 
     publication = _publish_reports(
@@ -799,7 +949,7 @@ def test_failed_report_publication_removes_staging_directory(
     review_directory.mkdir()
     outputs = {
         prompt_output_variable_name(prompt_name): prompt_name
-        for prompt_name in ANALYSIS_PROMPTS
+        for prompt_name in REPORT_PROMPTS
     }
 
     def fail_replace(source: Path, destination: Path) -> None:
@@ -837,7 +987,7 @@ def test_machine_readable_result_contract_tracks_the_pipeline() -> None:
     assert set(specialist_contract["properties"]) == set(SPECIALIST_PROMPTS)
     report_paths_contract = schema["properties"]["report_paths"]
     expected_output_names = {
-        prompt_output_variable_name(prompt_name) for prompt_name in ANALYSIS_PROMPTS
+        prompt_output_variable_name(prompt_name) for prompt_name in REPORT_PROMPTS
     }
     assert set(report_paths_contract["required"]) == expected_output_names
     assert set(report_paths_contract["properties"]) == expected_output_names

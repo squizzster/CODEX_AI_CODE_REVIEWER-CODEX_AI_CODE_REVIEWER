@@ -44,7 +44,8 @@ DEFAULT_RUNNER_ROOT = PROJECT_ROOT.parent / "CODEX_PROMPT_RUNNER_SYSTEM"
 DEFAULT_REPORTS_ROOT = PROJECT_ROOT / "reports"
 RESULT_SCHEMA = "codex-ai-code-reviewer.result/v2"
 ANALYSIS_PROJECT = "CODEX_AI_CODE_REVIEW"
-# Reconnaissance is temporarily disabled; its prompt configuration is retained.
+RECONNAISSANCE_PROMPT = "ANALYZE_RECONNAISSANCE"
+QUESTIONS_VARIABLE = "QUESTIONS"
 SPECIALIST_PROMPTS = (
     "ANALYZE_PIPELINE",
     "ANALYZE_BOUNDARIES",
@@ -62,7 +63,8 @@ SPECIALIST_VARIABLE_BY_PROMPT = {
     "ANALYZE_PERFORMANCE": "PERFORMANCE_SPECIALIST",
 }
 COMPARISON_PROMPT = "COMPARE_AGENT_REPORTS"
-ANALYSIS_PROMPTS = (*SPECIALIST_PROMPTS, COMPARISON_PROMPT)
+REPORT_PROMPTS = (*SPECIALIST_PROMPTS, COMPARISON_PROMPT)
+ANALYSIS_PROMPTS = (RECONNAISSANCE_PROMPT, *REPORT_PROMPTS)
 WORKSPACE_README_APPEND_VARIABLE = "ADD_TO_README_MD"
 
 
@@ -283,6 +285,44 @@ def _final_output_produced(
     return report
 
 
+def _extract_specialist_question_blocks(
+    reconnaissance_output: str,
+) -> dict[str, str]:
+    """Extract exactly one complete reconnaissance block per specialist."""
+
+    question_blocks: dict[str, str] = {}
+    errors: list[str] = []
+    for prompt_name in SPECIALIST_PROMPTS:
+        opening_tag = f"<{prompt_name}>"
+        closing_tag = f"</{prompt_name}>"
+        opening_count = reconnaissance_output.count(opening_tag)
+        closing_count = reconnaissance_output.count(closing_tag)
+        if opening_count != 1 or closing_count != 1:
+            errors.append(
+                f"{prompt_name} has {opening_count} opening and "
+                f"{closing_count} closing tags"
+            )
+            continue
+        block_start = reconnaissance_output.index(opening_tag)
+        content_start = block_start + len(opening_tag)
+        block_end = reconnaissance_output.find(closing_tag, content_start)
+        if block_end == -1:
+            errors.append(f"{prompt_name} closes before its questions block opens")
+            continue
+        if not reconnaissance_output[content_start:block_end].strip():
+            errors.append(f"{prompt_name} has an empty questions block")
+            continue
+        question_blocks[prompt_name] = reconnaissance_output[
+            block_start : block_end + len(closing_tag)
+        ].strip()
+    if errors:
+        raise InitializationError(
+            "Reconnaissance did not produce exactly one non-empty questions block "
+            f"for every specialist: {'; '.join(errors)}"
+        )
+    return question_blocks
+
+
 def _require_pipeline_variable_contract(
     prompts: dict[str, PromptDefinition], variables: dict[str, str]
 ) -> None:
@@ -290,32 +330,46 @@ def _require_pipeline_variable_contract(
 
     output_variable_by_prompt = {
         prompt_name: prompt_output_variable_name(prompt_name)
-        for prompt_name in ANALYSIS_PROMPTS
+        for prompt_name in REPORT_PROMPTS
     }
-    collisions = sorted(variables.keys() & output_variable_by_prompt.values())
+    reserved_runtime_variables = {
+        *output_variable_by_prompt.values(),
+        QUESTIONS_VARIABLE,
+    }
+    collisions = sorted(variables.keys() & reserved_runtime_variables)
     if collisions:
         raise InitializationError(
-            "Prompt output variables are generated at runtime and cannot be supplied: "
+            "Pipeline variables are generated at runtime and cannot be supplied: "
             f"{', '.join(collisions)}"
         )
 
     base_variables = set(variables)
     available_by_prompt = {
-        prompt_name: base_variables for prompt_name in SPECIALIST_PROMPTS
+        RECONNAISSANCE_PROMPT: base_variables,
+        **{
+            prompt_name: base_variables | {QUESTIONS_VARIABLE}
+            for prompt_name in SPECIALIST_PROMPTS
+        },
     }
     available_by_prompt[COMPARISON_PROMPT] = base_variables | {
         output_variable_by_prompt[prompt_name] for prompt_name in SPECIALIST_PROMPTS
     }
 
     for prompt_name in ANALYSIS_PROMPTS:
-        missing = sorted(
-            variable_reference_names(prompts[prompt_name].template)
-            - available_by_prompt[prompt_name]
-        )
+        referenced_variables = variable_reference_names(prompts[prompt_name].template)
+        missing = sorted(referenced_variables - available_by_prompt[prompt_name])
         if missing:
             raise InitializationError(
                 f"{prompts[prompt_name].source_path}: prompt {prompt_name} references "
                 f"variables unavailable at its pipeline stage: {', '.join(missing)}"
+            )
+        if (
+            prompt_name in SPECIALIST_PROMPTS
+            and QUESTIONS_VARIABLE not in referenced_variables
+        ):
+            raise InitializationError(
+                f"{prompts[prompt_name].source_path}: prompt {prompt_name} must "
+                f"reference {QUESTIONS_VARIABLE}"
             )
 
 
@@ -330,6 +384,7 @@ def _workspace_readmes(
             f"Missing workspace README variable: {WORKSPACE_README_APPEND_VARIABLE}"
         )
     prompt_context = {
+        RECONNAISSANCE_PROMPT: variables["RECONNAISSANCE_SPECIALIST"],
         **{
             prompt_name: variables[variable_name]
             for prompt_name, variable_name in SPECIALIST_VARIABLE_BY_PROMPT.items()
@@ -350,9 +405,24 @@ def _run_review_pipeline(
     working_directory: Path,
     overrides: ReviewExecutionOverrides = DEFAULT_EXECUTION_OVERRIDES,
 ) -> ReviewPipelineResult:
-    """Run independent specialists concurrently, then audit their reports."""
+    """Generate questions, run specialists concurrently, then audit reports."""
 
     _require_pipeline_variable_contract(prompts, variables)
+    reconnaissance_prompt = prompts[RECONNAISSANCE_PROMPT]
+    reconnaissance = runner.run_prompt(
+        ANALYSIS_PROJECT,
+        RECONNAISSANCE_PROMPT,
+        variables=variables,
+        working_directory=working_directory,
+        model=overrides.model,
+        reasoning_effort=overrides.reasoning_effort,
+    )
+    _require_expected_execution(reconnaissance, reconnaissance_prompt, overrides)
+    reconnaissance_output = _final_output_produced(
+        reconnaissance, reconnaissance_prompt
+    )
+    question_blocks = _extract_specialist_question_blocks(reconnaissance_output)
+
     specialist_reviews: dict[str, dict[str, Any]] = {}
     prompt_output_variables: dict[str, str] = {}
     failures: dict[str, str] = {}
@@ -364,7 +434,10 @@ def _run_review_pipeline(
                 runner.run_prompt,
                 ANALYSIS_PROJECT,
                 prompt_name,
-                variables=variables,
+                variables={
+                    **variables,
+                    QUESTIONS_VARIABLE: question_blocks[prompt_name],
+                },
                 working_directory=working_directory,
                 model=overrides.model,
                 reasoning_effort=overrides.reasoning_effort,
@@ -466,7 +539,7 @@ def _publish_reports(
     ) is None:
         raise InitializationError(f"Invalid review run ID: {run_id!r}")
     expected_names = tuple(
-        prompt_output_variable_name(prompt_name) for prompt_name in ANALYSIS_PROMPTS
+        prompt_output_variable_name(prompt_name) for prompt_name in REPORT_PROMPTS
     )
     if set(prompt_outputs) != set(expected_names):
         missing = sorted(set(expected_names) - set(prompt_outputs))
@@ -546,7 +619,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         variable_values = compose_variable_values(
             configured_variables,
             review_directory,
-            reserved_runtime_variables=reserved_prompt_output_variables,
+            reserved_runtime_variables={
+                *reserved_prompt_output_variables,
+                QUESTIONS_VARIABLE,
+            },
         )
         _require_pipeline_variable_contract(analysis_prompts, variable_values)
         configured_runner_root = os.environ.get("CODEX_PROMPT_RUNNER_PROJECT_ROOT")
@@ -596,7 +672,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "review_directory": str(review_directory),
         "catalog": report.as_dict(),
         "variables": sorted(
-            variable_values.keys() | pipeline.prompt_output_variables.keys()
+            variable_values.keys()
+            | pipeline.prompt_output_variables.keys()
+            | {QUESTIONS_VARIABLE}
         ),
         "runtime_variables": {ARG_DIRECTORY_VARIABLE: str(review_directory)},
         "specialist_reviews": {
