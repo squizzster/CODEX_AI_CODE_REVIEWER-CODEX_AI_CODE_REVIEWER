@@ -22,11 +22,12 @@ from codex_ai_code_reviewer.cli import (
     _analysis_prompt_definitions,
     _enter_review_directory,
     _parser,
+    _publish_reports,
     _require_expected_execution,
     _require_pipeline_variable_contract,
     _review_directory,
+    _review_run_id,
     _run_review_pipeline,
-    _write_final_review,
 )
 from codex_ai_code_reviewer.initialization import (
     InitializationError,
@@ -137,12 +138,28 @@ def test_parser_accepts_execution_overrides_before_or_after_directory(
     assert arguments.directory == Path("/project")
     assert arguments.model == "gpt-5.6-luna"
     assert arguments.reasoning_effort == "max"
+    assert arguments.reports_directory.name == "reports"
 
 
 def test_review_directory_resolves_an_existing_readable_directory(
     tmp_path: Path,
 ) -> None:
     assert _review_directory(tmp_path) == tmp_path.resolve()
+
+
+def test_review_run_id_is_utc_and_lexically_sortable() -> None:
+    run_ids = [
+        _review_run_id(0),
+        _review_run_id(10_000_000),
+        _review_run_id(1_000_000_000),
+    ]
+
+    assert run_ids == [
+        "1970-01-01T00-00-00.00Z",
+        "1970-01-01T00-00-00.01Z",
+        "1970-01-01T00-00-01.00Z",
+    ]
+    assert sorted(run_ids) == run_ids
 
 
 def test_review_directory_must_exist(tmp_path: Path) -> None:
@@ -279,6 +296,54 @@ def test_shell_launcher_forwards_overrides_in_either_position(
         else [str(review_directory.resolve()), *options]
     )
     assert forwarded[6:] == expected_arguments
+
+
+@pytest.mark.parametrize("inline", [True, False])
+def test_shell_launcher_resolves_reports_directory_before_entering_target(
+    tmp_path: Path,
+    inline: bool,
+) -> None:
+    reviewer_root = Path(__file__).parents[1].resolve()
+    review_directory = tmp_path / "target"
+    fake_bin = tmp_path / "bin"
+    observation = tmp_path / "launcher-observation"
+    review_directory.mkdir()
+    fake_bin.mkdir()
+    fake_uv = fake_bin / "uv"
+    fake_uv.write_text(
+        "#!/usr/bin/env bash\n"
+        'printf \'%s\\n\' "$@" >"$LAUNCHER_OBSERVATION"\n',
+        encoding="utf-8",
+    )
+    fake_uv.chmod(0o755)
+    environment = os.environ | {
+        "LAUNCHER_OBSERVATION": str(observation),
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+    }
+    reports_option = (
+        ["--reports-directory=relative-reports"]
+        if inline
+        else ["--reports-directory", "relative-reports"]
+    )
+
+    completed = subprocess.run(
+        [reviewer_root / "run_the_code_review", *reports_option, review_directory],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    forwarded = observation.read_text(encoding="utf-8").splitlines()[5:]
+    expected_reports_directory = tmp_path / "relative-reports"
+    expected_option = (
+        [f"--reports-directory={expected_reports_directory}"]
+        if inline
+        else ["--reports-directory", str(expected_reports_directory)]
+    )
+    assert forwarded == [*expected_option, str(review_directory)]
 
 
 def test_execution_must_match_configured_policy(tmp_path: Path) -> None:
@@ -529,17 +594,76 @@ def test_review_pipeline_does_not_compare_incomplete_specialist_reports(
     assert COMPARISON_PROMPT not in runner.calls
 
 
-def test_final_review_is_atomically_replaced_with_complete_markdown(
+def test_reports_are_published_under_project_and_run_directories(
     tmp_path: Path,
 ) -> None:
-    output_path = tmp_path / "final_review.md"
-    output_path.write_text("stale\n", encoding="utf-8")
+    review_directory = tmp_path / "PROJECT NAME"
+    reports_root = tmp_path / "reports"
+    review_directory.mkdir()
+    outputs = {
+        prompt_output_variable_name(prompt_name): f"Report from {prompt_name}"
+        for prompt_name in ANALYSIS_PROMPTS
+    }
 
-    observed_path = _write_final_review("audited review", output_path)
+    publication = _publish_reports(
+        outputs,
+        review_directory=review_directory,
+        reports_root=reports_root,
+        run_id="2026-09-19T12-00-00.12Z",
+    )
 
-    assert observed_path == output_path
-    assert output_path.read_text(encoding="utf-8") == "audited review\n"
-    assert list(tmp_path.iterdir()) == [output_path]
+    assert publication.project_name == "PROJECT_NAME"
+    assert publication.run_id == "2026-09-19T12-00-00.12Z"
+    assert publication.report_directory == (
+        reports_root / "PROJECT_NAME" / publication.run_id
+    )
+    assert set(publication.report_paths) == set(outputs)
+    assert {path.name for path in publication.report_paths.values()} == {
+        f"{output_name}.md" for output_name in outputs
+    }
+    for output_name, report_path in publication.report_paths.items():
+        assert report_path.read_text(encoding="utf-8") == f"{outputs[output_name]}\n"
+    assert [path.name for path in publication.report_directory.parent.iterdir()] == [
+        publication.run_id
+    ]
+
+    with pytest.raises(InitializationError, match="already exists"):
+        _publish_reports(
+            {name: f"replacement {content}" for name, content in outputs.items()},
+            review_directory=review_directory,
+            reports_root=reports_root,
+            run_id=publication.run_id,
+        )
+
+    for output_name, report_path in publication.report_paths.items():
+        assert report_path.read_text(encoding="utf-8") == f"{outputs[output_name]}\n"
+
+
+def test_failed_report_publication_removes_staging_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    review_directory = tmp_path / "PROJECT"
+    reports_root = tmp_path / "reports"
+    review_directory.mkdir()
+    outputs = {
+        prompt_output_variable_name(prompt_name): prompt_name
+        for prompt_name in ANALYSIS_PROMPTS
+    }
+
+    def fail_replace(source: Path, destination: Path) -> None:
+        raise OSError("simulated publication failure")
+
+    monkeypatch.setattr(os, "replace", fail_replace)
+
+    with pytest.raises(InitializationError, match="simulated publication failure"):
+        _publish_reports(
+            outputs,
+            review_directory=review_directory,
+            reports_root=reports_root,
+            run_id="2026-09-19T12-00-01.12Z",
+        )
+
+    assert list((reports_root / "PROJECT").iterdir()) == []
 
 
 def test_machine_readable_result_contract_tracks_the_pipeline() -> None:
@@ -549,6 +673,19 @@ def test_machine_readable_result_contract_tracks_the_pipeline() -> None:
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
 
     assert schema["properties"]["schema"]["const"] == RESULT_SCHEMA
+    assert "final_review_path" not in schema["properties"]
+    assert {
+        "report_project_name",
+        "report_run_id",
+        "report_directory",
+        "report_paths",
+    } <= set(schema["required"])
     specialist_contract = schema["properties"]["specialist_reviews"]
     assert tuple(specialist_contract["required"]) == SPECIALIST_PROMPTS
     assert set(specialist_contract["properties"]) == set(SPECIALIST_PROMPTS)
+    report_paths_contract = schema["properties"]["report_paths"]
+    expected_output_names = {
+        prompt_output_variable_name(prompt_name) for prompt_name in ANALYSIS_PROMPTS
+    }
+    assert set(report_paths_contract["required"]) == expected_output_names
+    assert set(report_paths_contract["properties"]) == expected_output_names

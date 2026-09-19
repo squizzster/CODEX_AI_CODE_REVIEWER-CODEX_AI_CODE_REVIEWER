@@ -5,11 +5,15 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import shutil
 import sys
 import tempfile
+import time
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -32,8 +36,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_ROOT = PROJECT_ROOT / "conf" / "projects"
 VARIABLES_ROOT = PROJECT_ROOT / "conf" / "vars"
 DEFAULT_RUNNER_ROOT = PROJECT_ROOT.parent / "CODEX_PROMPT_RUNNER_SYSTEM"
-FINAL_REVIEW_PATH = Path("/tmp/final_review.md")
-RESULT_SCHEMA = "codex-ai-code-reviewer.result/v1"
+DEFAULT_REPORTS_ROOT = PROJECT_ROOT / "reports"
+RESULT_SCHEMA = "codex-ai-code-reviewer.result/v2"
 ANALYSIS_PROJECT = "CODEX_AI_CODE_REVIEW"
 # Reconnaissance is temporarily disabled; its prompt configuration is retained.
 SPECIALIST_PROMPTS = (
@@ -77,6 +81,14 @@ class ReviewExecutionOverrides:
 DEFAULT_EXECUTION_OVERRIDES = ReviewExecutionOverrides()
 
 
+@dataclass(frozen=True, slots=True)
+class ReportPublication:
+    project_name: str
+    run_id: str
+    report_directory: Path
+    report_paths: dict[str, Path]
+
+
 def _model_name(value: str) -> str:
     if not value or any(character.isspace() for character in value):
         raise argparse.ArgumentTypeError(
@@ -100,6 +112,12 @@ def _parser() -> argparse.ArgumentParser:
         dest="reasoning_effort",
         choices=sorted(REASONING_EFFORTS),
         help="override every prompt's configured reasoning effort for this run",
+    )
+    parser.add_argument(
+        "--reports-directory",
+        type=Path,
+        default=DEFAULT_REPORTS_ROOT,
+        help="report root containing <project_name>/<run_id>/ directories",
     )
     parser.add_argument("directory", type=Path, help="directory to review")
     return parser
@@ -134,6 +152,17 @@ def _enter_review_directory(review_directory: Path) -> None:
     except OSError as error:
         raise InitializationError(
             f"Cannot enter review directory {review_directory}: {error}"
+        ) from error
+
+
+def _reports_root(path: Path) -> Path:
+    """Resolve the reports root before entering the reviewed directory."""
+
+    try:
+        return path.expanduser().resolve(strict=False)
+    except OSError as error:
+        raise InitializationError(
+            f"Cannot resolve reports directory {path}: {error}"
         ) from error
 
 
@@ -320,31 +349,91 @@ def _review_summary(prompt_name: str, review: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _write_final_review(content: str, output_path: Path = FINAL_REVIEW_PATH) -> Path:
-    """Atomically publish the successful comparison report as Markdown."""
+def _report_project_name(review_directory: Path) -> str:
+    target_name = re.sub(r"[^A-Za-z0-9._-]+", "_", review_directory.name)
+    return target_name.strip("._-")[:80] or "repository"
 
-    temporary_path: Path | None = None
-    try:
-        descriptor, temporary_name = tempfile.mkstemp(
-            dir=output_path.parent,
-            prefix=f".{output_path.name}.",
-            text=True,
-        )
-        temporary_path = Path(temporary_name)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as temporary_file:
-            temporary_file.write(content)
-            if not content.endswith("\n"):
-                temporary_file.write("\n")
-            temporary_file.flush()
-            os.fsync(temporary_file.fileno())
-        os.replace(temporary_path, output_path)
-    except OSError as error:
-        if temporary_path is not None:
-            temporary_path.unlink(missing_ok=True)
+
+def _review_run_id(timestamp_ns: int | None = None) -> str:
+    observed_ns = time.time_ns() if timestamp_ns is None else timestamp_ns
+    seconds, nanoseconds = divmod(observed_ns, 1_000_000_000)
+    observed_at = datetime.fromtimestamp(seconds, UTC)
+    hundredths = nanoseconds // 10_000_000
+    return f"{observed_at:%Y-%m-%dT%H-%M-%S}.{hundredths:02d}Z"
+
+
+def _publish_reports(
+    prompt_outputs: dict[str, str],
+    *,
+    review_directory: Path,
+    reports_root: Path,
+    run_id: str,
+) -> ReportPublication:
+    """Atomically publish one complete directory of prompt reports."""
+
+    if re.fullmatch(
+        r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}\.[0-9]{2}Z",
+        run_id,
+    ) is None:
+        raise InitializationError(f"Invalid review run ID: {run_id!r}")
+    expected_names = tuple(
+        prompt_output_variable_name(prompt_name) for prompt_name in ANALYSIS_PROMPTS
+    )
+    if set(prompt_outputs) != set(expected_names):
+        missing = sorted(set(expected_names) - set(prompt_outputs))
+        unexpected = sorted(set(prompt_outputs) - set(expected_names))
+        details = []
+        if missing:
+            details.append(f"missing {', '.join(missing)}")
+        if unexpected:
+            details.append(f"unexpected {', '.join(unexpected)}")
         raise InitializationError(
-            f"Cannot write final review to {output_path}: {error}"
+            f"Cannot publish incomplete prompt reports ({'; '.join(details)})"
+        )
+
+    staging_directory: Path | None = None
+    project_name = _report_project_name(review_directory)
+    project_reports_directory = reports_root / project_name
+    try:
+        project_reports_directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if not project_reports_directory.is_dir():
+            raise OSError(f"not a directory: {project_reports_directory}")
+        staging_directory = Path(
+            tempfile.mkdtemp(
+                prefix=".code_review_pending_", dir=project_reports_directory
+            )
+        )
+        for output_name in expected_names:
+            report_path = staging_directory / f"{output_name}.md"
+            with report_path.open("x", encoding="utf-8") as report_file:
+                content = prompt_outputs[output_name]
+                report_file.write(content)
+                if not content.endswith("\n"):
+                    report_file.write("\n")
+                report_file.flush()
+                os.fsync(report_file.fileno())
+
+        report_directory = project_reports_directory / run_id
+        if report_directory.exists():
+            raise OSError(f"report directory already exists: {report_directory}")
+        os.replace(staging_directory, report_directory)
+        staging_directory = None
+    except OSError as error:
+        if staging_directory is not None:
+            shutil.rmtree(staging_directory, ignore_errors=True)
+        raise InitializationError(
+            f"Cannot publish reports in {reports_root}: {error}"
         ) from error
-    return output_path
+
+    return ReportPublication(
+        project_name,
+        run_id,
+        report_directory,
+        {
+            output_name: report_directory / f"{output_name}.md"
+            for output_name in expected_names
+        },
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -355,6 +444,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     try:
         review_directory = _review_directory(arguments.directory)
+        reports_root = _reports_root(arguments.reports_directory)
         _enter_review_directory(review_directory)
         projects = load_project_definitions(CONFIG_ROOT)
         analysis_prompts = _analysis_prompt_definitions(projects)
@@ -378,6 +468,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         runner = PromptRunnerCli(runner_root)
         report = initialize_prompt_catalog(projects, runner)
+        review_run_id = _review_run_id()
         pipeline = _run_review_pipeline(
             runner,
             analysis_prompts,
@@ -385,11 +476,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             working_directory=review_directory,
             overrides=overrides,
         )
-        final_review_path = _write_final_review(
-            _require_report_output(
-                pipeline.comparison_review,
-                analysis_prompts[COMPARISON_PROMPT],
-            )
+        publication = _publish_reports(
+            pipeline.prompt_output_variables,
+            review_directory=review_directory,
+            reports_root=reports_root,
+            run_id=review_run_id,
         )
     except InitializationError as error:
         print(f"error: {error}", file=sys.stderr)
@@ -399,7 +490,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         "schema": RESULT_SCHEMA,
         "ok": True,
         "phase": "code_review_complete",
-        "final_review_path": str(final_review_path),
+        "report_project_name": publication.project_name,
+        "report_run_id": publication.run_id,
+        "report_directory": str(publication.report_directory),
+        "report_paths": {
+            output_name: str(report_path)
+            for output_name, report_path in publication.report_paths.items()
+        },
         "review_directory": str(review_directory),
         "catalog": report.as_dict(),
         "variables": sorted(

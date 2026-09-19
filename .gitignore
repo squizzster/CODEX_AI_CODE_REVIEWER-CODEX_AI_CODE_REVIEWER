@@ -11,3 +11,6 @@ wheels/
 
 # Disposable project-local working directories
 /.tmp.*
+
+# Generated code-review reports
+/reports/

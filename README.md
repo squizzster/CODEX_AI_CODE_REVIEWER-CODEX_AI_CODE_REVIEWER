@@ -18,6 +18,7 @@ uv sync --locked --group dev
 ./run_the_code_review /absolute/or/relative/repository
 ./run_the_code_review --model gpt-5.6-luna --reasoning max /repository
 ./run_the_code_review /repository --model gpt-5.6-luna --reasoning max
+./run_the_code_review --reports-directory /archive/code-reviews /repository
 ```
 
 The review directory must exist and be readable and traversable. It becomes the
@@ -27,6 +28,8 @@ execute Codex inside a safety-created isolated workspace derived from that direc
 the original target path and isolated execution workspace are intentionally distinct.
 `--model` and `--reasoning` apply to every specialist and the comparison for that run
 without changing the defaults stored in prompt YAML or the Prompt Runner catalogue.
+Reports default to this project's `reports/` directory. A relative
+`--reports-directory` is resolved from the directory where the launcher was invoked.
 
 ## Pipeline
 
@@ -36,12 +39,19 @@ without changing the defaults stored in prompt YAML or the Prompt Runner catalog
 3. Publish each successful result internally as `{{VAR:<PROMPT_NAME>_OUTPUT}}`.
 4. Run `COMPARE_AGENT_REPORTS` only after all specialist reports succeed, with each
    report bound by prompt identity rather than completion order.
-5. Atomically publish the synthesis to `/tmp/final_review.md` and emit the complete
+5. Atomically publish all seven Markdown reports under
+   `reports/<project_name>/<review_started_at_utc>/` and emit the complete
    versioned result as one JSON object on stdout.
 
 Progress from Prompt Runner is forwarded to stderr. Expected input, configuration,
-catalogue, and execution failures return exit code `2`; no comparison or final report
-is published from an incomplete specialist stage.
+catalogue, execution, and publication failures return exit code `2`; no report directory
+is published from an incomplete pipeline.
+
+Each published filename follows `<PROMPT_NAME>_OUTPUT.md`, including
+`ANALYZE_SECURITY_OUTPUT.md` and `COMPARE_AGENT_REPORTS_OUTPUT.md`. The comparison
+report is stored with the others in a run directory identified by a sortable UTC ID
+such as `2026-09-19T15-47-45.12Z`;
+each review record retains its own Prompt Runner execution ID in the JSON result.
 
 `ANALYZE_RECONNAISSANCE` is temporarily disabled. Its prompt and specialist variable
 remain configured, but it is not executed or included in the comparison or result.
@@ -69,11 +79,10 @@ remain isolated from the source repository by Prompt Runner.
   independent of parallel completion order.
 - `REVIEW_DIRECTORY_CONTEXT` injects the same target boundary into all active prompts.
 
-The result contract is [docs/contracts/code-review-result.schema.json](docs/contracts/code-review-result.schema.json).
-During ALPHA, JSON consumers should follow the current schema: `specialist_reviews`
-contains the six active specialist reports. Consumers expecting
-`ANALYZE_RECONNAISSANCE` must update for its temporary removal, including the absence
-of `ANALYZE_RECONNAISSANCE_OUTPUT` from the completed run's variable names.
+The v2 result contract is [docs/contracts/code-review-result.schema.json](docs/contracts/code-review-result.schema.json).
+It exposes `report_project_name`, `report_run_id`, `report_directory`, and a complete
+`report_paths` map. `specialist_reviews` contains the six active specialist reports;
+`ANALYZE_RECONNAISSANCE` and its output remain absent while that specialist is disabled.
 Machine-readable ownership and workflow records are under `docs/architecture/modules/`
 and `docs/architecture/features/`.
 
@@ -92,4 +101,4 @@ uvx --from "git+https://github.com/squizzster/MODULAR_VERTICAL_ARCHITECTURE-MODU
   host argument-size limits bound unusually large combined reports.
 - Runs have no persisted resume state. Process interruption relies on Prompt Runner
   and operating-system child-process termination.
-- The successful Markdown publication path is fixed at `/tmp/final_review.md`.
+- Generated report runs are retained until an operator removes or archives them.
