@@ -1,7 +1,7 @@
 schema_version: 1
 id: code-review.perform-review
 module: code-review
-purpose: Produce one audited review from seven independent specialist reports.
+purpose: Produce one audited review from six independent specialist reports.
 status: active
 shape: workflow
 entrypoints:
@@ -45,17 +45,17 @@ extensions:
     - ANALYZE_INTEGRITY
     - ANALYZE_SECURITY
     - ANALYZE_PERFORMANCE
+  disabled_specialist_prompts:
     - ANALYZE_RECONNAISSANCE
   comparison_prompt: COMPARE_AGENT_REPORTS
   execution:
-    specialist_concurrency: 7
+    specialist_concurrency: 6
     comparison_requires_all_specialists: true
     prompt_delivery_mode: LIVE
     default_model: gpt-6-astra
     default_reasoning_effort: xhigh
     invocation_overrides_apply_to_all_prompts: true
     invocation_overrides_do_not_mutate_catalogue_defaults: true
-    reconnaissance_excludes_analysis_header: true
     prompt_output_variables:
       naming: <PROMPT_NAME>_OUTPUT
       owner: completed_prompt
@@ -69,7 +69,6 @@ extensions:
         - ANALYZE_INTEGRITY_OUTPUT
         - ANALYZE_SECURITY_OUTPUT
         - ANALYZE_PERFORMANCE_OUTPUT
-        - ANALYZE_RECONNAISSANCE_OUTPUT
     risk_profiles:
       ANALYZE_PIPELINE: BALANCED
       ANALYZE_BOUNDARIES: BALANCED
@@ -77,7 +76,6 @@ extensions:
       ANALYZE_INTEGRITY: BALANCED
       ANALYZE_SECURITY: BALANCED
       ANALYZE_PERFORMANCE: BALANCED
-      ANALYZE_RECONNAISSANCE: BALANCED
       COMPARE_AGENT_REPORTS: NETWORKED_WORKSPACE
   operational_limits:
     - specialist reports cross the Prompt Runner boundary as process arguments
