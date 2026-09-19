@@ -232,17 +232,15 @@ def _require_report_output(review: dict[str, Any], prompt: PromptDefinition) -> 
     return output
 
 
-def _require_workspace_report_output(
+def _select_report_output(
     review: dict[str, Any], prompt: PromptDefinition
 ) -> str:
-    """Read the one authoritative Markdown report from the agent workspace."""
+    """Prefer one workspace Markdown report, falling back to the final message."""
 
+    handoff = _require_report_output(review, prompt)
     workspace_value = review.get("isolated_workspace")
     if not isinstance(workspace_value, str) or not workspace_value:
-        raise InitializationError(
-            f"Prompt Runner returned no isolated workspace for "
-            f"{prompt.project_name}/{prompt.prompt_name}"
-        )
+        return handoff
     workspace = Path(workspace_value)
     output_directory = workspace / OUTPUT_DIRECTORY_NAME
     try:
@@ -262,6 +260,8 @@ def _require_workspace_report_output(
             f"{prompt.project_name}/{prompt.prompt_name}: {error}"
         ) from error
     if len(markdown_paths) != 1:
+        if not markdown_paths:
+            return handoff
         raise InitializationError(
             f"Prompt must produce exactly one Markdown file in "
             f"{output_directory}; found {len(markdown_paths)}"
@@ -368,14 +368,13 @@ def _run_review_pipeline(
             try:
                 review = future.result()
                 _require_expected_execution(review, prompt, overrides)
-                _require_report_output(review, prompt)
-                workspace_report = _require_workspace_report_output(review, prompt)
+                selected_report = _select_report_output(review, prompt)
             except InitializationError as error:
                 failures[prompt_name] = f"{type(error).__name__}: {error}"
             else:
                 specialist_reviews[prompt_name] = review
                 prompt_output_variables[prompt_output_variable_name(prompt_name)] = (
-                    workspace_report
+                    selected_report
                 )
 
     if failures:
@@ -402,9 +401,8 @@ def _run_review_pipeline(
     )
     comparison_prompt = prompts[COMPARISON_PROMPT]
     _require_expected_execution(comparison, comparison_prompt, overrides)
-    _require_report_output(comparison, comparison_prompt)
     prompt_output_variables[prompt_output_variable_name(COMPARISON_PROMPT)] = (
-        _require_workspace_report_output(comparison, comparison_prompt)
+        _select_report_output(comparison, comparison_prompt)
     )
     return ReviewPipelineResult(
         ordered_specialist_reviews,

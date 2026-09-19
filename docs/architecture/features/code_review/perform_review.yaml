@@ -19,7 +19,7 @@ outcomes:
   - one reports/<project_name>/<review_started_at_utc>/ directory
   - one <PROMPT_NAME>_OUTPUT.md file for each specialist and the comparison
   - each completed prompt owns one run-local <PROMPT_NAME>_OUTPUT variable
-  - each prompt output variable contains the one Markdown report found in that prompt's outputs directory
+  - each prompt output variable contains the one Markdown report found in outputs, falling back to the Prompt Runner final message when none exists
   - each stock-executor workspace is initialized from its first location-bearing live event
 failures:
   - invalid directory, configuration, or variable graph returns exit code 2
@@ -72,12 +72,12 @@ extensions:
       final_report_link: final_md_report -> outputs
       output_contract:
         scan: direct children of outputs
-        markdown_files_required: exactly_one
+        markdown_selection: use exactly one; fall back to final message when zero; reject more than one
         file_requirements: nonempty regular file, not a symlink
-        prompt_runner_final_message: retained as execution metadata, excluded from comparison evidence
+        prompt_runner_final_message: retained as execution metadata and used as the zero-file fallback
       workspace_readme: resolved specialist instruction or comparison prompt
       cached_result_creates_workspace: false
-      custom_executor_without_isolated_workspace: event accepted, review fails the file-output contract
+      custom_executor_without_isolated_workspace: final message supplies the report
     default_model: gpt-6-astra
     default_reasoning_effort: xhigh
     invocation_overrides_apply_to_all_prompts: true

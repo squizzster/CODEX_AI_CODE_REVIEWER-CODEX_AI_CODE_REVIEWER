@@ -42,12 +42,14 @@ Reports default to this project's `reports/` directory. A relative
    success and `0` on failure.
 3. Run `ANALYZE_PIPELINE`, `ANALYZE_BOUNDARIES`, `ANALYZE_NETWORKING`,
    `ANALYZE_INTEGRITY`, `ANALYZE_SECURITY`, and `ANALYZE_PERFORMANCE` in parallel.
-4. After each successful execution, scan its real `outputs/` directory, require
-   exactly one non-empty regular Markdown file, and publish that file's content
-   internally as `{{VAR:<PROMPT_NAME>_OUTPUT}}`.
+4. After each successful execution, scan its real `outputs/` directory. Prefer its
+   one non-empty regular Markdown file; when no Markdown file exists, use the Prompt
+   Runner final message. Publish the selected content internally as
+   `{{VAR:<PROMPT_NAME>_OUTPUT}}`.
 5. Run `COMPARE_AGENT_REPORTS` only after all specialist reports succeed, with each
    complete file-backed report bound by prompt identity rather than completion order.
-6. Apply the same one-Markdown-file contract to `COMPARE_AGENT_REPORTS`, then
+6. Apply the same file-preferred, final-message-fallback selection to
+   `COMPARE_AGENT_REPORTS`, then
    atomically publish all seven Markdown reports under
    `reports/<project_name>/<review_started_at_utc>/` and emit the complete
    versioned result as one JSON object on stdout.
@@ -58,9 +60,10 @@ original JSONL record to stderr. Cached results and custom executors legitimatel
 configuration, catalogue, execution, and publication failures return exit code `2`;
 no report directory is published from an incomplete pipeline.
 
-The Prompt Runner's small final-message `output` remains in each review record as an
-execution handoff. It is not used as specialist evidence in the comparison and is not
-published in place of the Markdown report from `outputs/`.
+The Prompt Runner's final-message `output` remains in each review record as an
+execution handoff and as the fallback report when `outputs/` contains no Markdown.
+When one valid Markdown report exists, its content is used instead. Multiple Markdown
+files remain an error because the intended report would be ambiguous.
 
 Each published filename follows `<PROMPT_NAME>_OUTPUT.md`, including
 `ANALYZE_SECURITY_OUTPUT.md` and `COMPARE_AGENT_REPORTS_OUTPUT.md`. The comparison

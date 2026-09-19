@@ -26,10 +26,10 @@ from codex_ai_code_reviewer.cli import (
     _publish_reports,
     _require_expected_execution,
     _require_pipeline_variable_contract,
-    _require_workspace_report_output,
     _review_directory,
     _review_run_id,
     _run_review_pipeline,
+    _select_report_output,
     _workspace_readmes,
 )
 from codex_ai_code_reviewer.initialization import (
@@ -415,7 +415,7 @@ def test_workspace_report_is_the_authoritative_prompt_output(tmp_path: Path) -> 
     review["isolated_workspace"] = str(workspace)
 
     assert (
-        _require_workspace_report_output(review, prompt)
+        _select_report_output(review, prompt)
         == "Complete pipeline report\n"
     )
 
@@ -423,7 +423,6 @@ def test_workspace_report_is_the_authoritative_prompt_output(tmp_path: Path) -> 
 @pytest.mark.parametrize(
     ("reports", "message"),
     [
-        ({}, "found 0"),
         ({"one.md": "one", "two.md": "two"}, "found 2"),
         ({"empty.md": "  \n"}, "is empty"),
     ],
@@ -441,7 +440,30 @@ def test_workspace_report_requires_exactly_one_nonempty_markdown_file(
     review["isolated_workspace"] = str(workspace)
 
     with pytest.raises(InitializationError, match=message):
-        _require_workspace_report_output(review, prompt)
+        _select_report_output(review, prompt)
+
+
+def test_workspace_report_falls_back_to_handoff_when_outputs_has_no_markdown(
+    tmp_path: Path,
+) -> None:
+    prompt = _prompt_definitions(tmp_path)["ANALYZE_PIPELINE"]
+    workspace = tmp_path / "isolated-workspace"
+    outputs = workspace / "outputs"
+    outputs.mkdir(parents=True)
+    (outputs / "probe-results.jsonl").write_text("{}\n", encoding="utf-8")
+    review = _successful_review("Complete report returned as the last message")
+    review["isolated_workspace"] = str(workspace)
+
+    assert _select_report_output(review, prompt) == review["output"]
+
+
+def test_report_falls_back_to_handoff_without_an_isolated_workspace(
+    tmp_path: Path,
+) -> None:
+    prompt = _prompt_definitions(tmp_path)["ANALYZE_PIPELINE"]
+    review = _successful_review("Custom executor report")
+
+    assert _select_report_output(review, prompt) == "Custom executor report"
 
 
 def test_workspace_report_rejects_a_markdown_symlink(tmp_path: Path) -> None:
@@ -456,7 +478,7 @@ def test_workspace_report_rejects_a_markdown_symlink(tmp_path: Path) -> None:
     review["isolated_workspace"] = str(workspace)
 
     with pytest.raises(InitializationError, match="regular file"):
-        _require_workspace_report_output(review, prompt)
+        _select_report_output(review, prompt)
 
 
 @pytest.mark.parametrize("missing_prompt", ANALYSIS_PROMPTS)
