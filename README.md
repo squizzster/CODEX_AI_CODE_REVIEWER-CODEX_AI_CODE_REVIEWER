@@ -46,9 +46,9 @@ is published from an incomplete specialist stage.
 `ANALYZE_RECONNAISSANCE` is temporarily disabled. Its prompt and specialist variable
 remain configured, but it is not executed or included in the comparison or result.
 
-`ANALYZE_PIPELINE`, `ANALYZE_BOUNDARIES`, `ANALYZE_INTEGRITY`, `ANALYZE_SECURITY`,
-and `ANALYZE_PERFORMANCE` use `BALANCED` execution.
-`ANALYZE_NETWORKING` and `COMPARE_AGENT_REPORTS` use `NETWORKED_WORKSPACE` so their
+`ANALYZE_PIPELINE`, `ANALYZE_BOUNDARIES`, `ANALYZE_INTEGRITY`, and
+`ANALYZE_PERFORMANCE` use `BALANCED` execution. `ANALYZE_NETWORKING`,
+`ANALYZE_SECURITY`, and `COMPARE_AGENT_REPORTS` use `NETWORKED_WORKSPACE` so their
 shell checks can reach network resources when justified. All tool-enabled executions
 remain isolated from the source repository by Prompt Runner.
 

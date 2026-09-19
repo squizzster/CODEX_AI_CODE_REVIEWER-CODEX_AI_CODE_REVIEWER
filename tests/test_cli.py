@@ -357,7 +357,7 @@ def test_repository_prompts_apply_the_intended_execution_profiles() -> None:
         "ANALYZE_BOUNDARIES": "BALANCED",
         "ANALYZE_NETWORKING": "NETWORKED_WORKSPACE",
         "ANALYZE_INTEGRITY": "BALANCED",
-        "ANALYZE_SECURITY": "BALANCED",
+        "ANALYZE_SECURITY": "NETWORKED_WORKSPACE",
         "ANALYZE_PERFORMANCE": "BALANCED",
         "COMPARE_AGENT_REPORTS": "NETWORKED_WORKSPACE",
     }
