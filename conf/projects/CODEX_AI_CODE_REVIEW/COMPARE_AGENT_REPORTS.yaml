@@ -52,6 +52,10 @@ prompt: |
   Separate correctness corrections from structural refactoring where practical, with characterisation tests preceding behaviour-moving changes. Tie verification to the affected paths and failure conditions, distinguishing existing coverage, checks actually executed, and proposed regression tests.
 
   Make confidence, coverage limits, and unresolved questions explicit. End with an ordered implementation sequence that makes the first safe changes and their prerequisites clear.
+
+  ## Final report output
+
+  Ideally, in markdown, `./outputs/final_report.md`, though this isn't mandated, it's still encouraged.
 model: gpt-6-astra
 reasoning_effort: max
 risk_profile: NETWORKED_WORKSPACE

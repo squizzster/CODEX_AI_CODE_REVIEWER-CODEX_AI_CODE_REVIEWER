@@ -1,4 +1,7 @@
 |
+  {{VAR:TRACE_PROBLEM}}
+
+  TASK:
   Review this project independently through your specialist lens. Follow relevant source, tests, configuration, documentation, and call sites wherever the evidence leads, including cross-cutting concerns beyond your primary responsibility. Treat third-party implementations as dependencies and assess this project’s use of them.
 
   Develop an evidence-based understanding of the existing architecture. Identify concrete bugs, meaningful architectural problems, and sound design choices worth preserving. Distinguish demonstrated defects, supported maintainability concerns, and unresolved hypotheses. Seek counterevidence and consider plausible intentional behaviour.
