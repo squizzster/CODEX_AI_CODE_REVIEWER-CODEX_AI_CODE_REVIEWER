@@ -1,8 +1,7 @@
 |
   ---
 
-  Your base critical project review directory is:
-   {{VAR:ARG_DIRECTORY}}
+  {{VAR:BASE_CRITICAL_DIRECTORY}}
 
   with only this specific {{VAR:ARG_DIRECTORY}} and it's sub-directories only so you should stay always within your critical path specifically.
   You may, if you need, utilize a,

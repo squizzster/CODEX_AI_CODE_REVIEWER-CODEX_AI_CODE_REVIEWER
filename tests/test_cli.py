@@ -407,7 +407,12 @@ def test_repository_prompts_share_one_resolved_directory_context(
         assert "Your base critical project review directory is:" not in prompt.template
 
     values = compose_variable_values(configured_variables, tmp_path)
+    base_directory_context = values["BASE_CRITICAL_DIRECTORY"]
     context = values["REVIEW_DIRECTORY_CONTEXT"]
+    assert base_directory_context in context
+    assert base_directory_context.count(str(tmp_path)) == 1
+    assert context.count(str(tmp_path)) == 2
+    assert "{{VAR:" not in base_directory_context
     assert str(tmp_path) in context
     assert "{{VAR:" not in context
 
