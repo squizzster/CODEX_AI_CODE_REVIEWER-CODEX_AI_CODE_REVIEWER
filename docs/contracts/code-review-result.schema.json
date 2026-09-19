@@ -72,8 +72,7 @@
         "ANALYZE_NETWORKING",
         "ANALYZE_INTEGRITY",
         "ANALYZE_SECURITY",
-        "ANALYZE_PERFORMANCE",
-        "ANALYZE_RECONNAISSANCE"
+        "ANALYZE_PERFORMANCE"
       ],
       "properties": {
         "ANALYZE_PIPELINE": { "$ref": "#/$defs/review" },
@@ -81,8 +80,7 @@
         "ANALYZE_NETWORKING": { "$ref": "#/$defs/review" },
         "ANALYZE_INTEGRITY": { "$ref": "#/$defs/review" },
         "ANALYZE_SECURITY": { "$ref": "#/$defs/review" },
-        "ANALYZE_PERFORMANCE": { "$ref": "#/$defs/review" },
-        "ANALYZE_RECONNAISSANCE": { "$ref": "#/$defs/review" }
+        "ANALYZE_PERFORMANCE": { "$ref": "#/$defs/review" }
       }
     },
     "review": {

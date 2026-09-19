@@ -1,7 +1,7 @@
 prompt: |
   {{VAR:REVIEW_DIRECTORY_CONTEXT}}
 
-  Analyze the report from **exactly seven genuinely independent specialist agents**, below:
+  Analyze the report from **exactly six genuinely independent specialist agents**, below:
 
   ```
   <AGENT_BOUNDARY_REPORT>
@@ -28,9 +28,6 @@ prompt: |
   {{VAR:ANALYZE_PERFORMANCE_OUTPUT}}
   </AGENT_PERFORMANCE_REPORT>
 
-  <AGENT_RECONNAISSANCE_REPORT>
-  {{VAR:ANALYZE_RECONNAISSANCE_OUTPUT}}
-  </AGENT_RECONNAISSANCE_REPORT>
   ```
 
   The work is review and planning.

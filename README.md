@@ -32,8 +32,7 @@ without changing the defaults stored in prompt YAML or the Prompt Runner catalog
 
 1. Validate repository-owned YAML and synchronize the Prompt Runner catalogue.
 2. Run `ANALYZE_PIPELINE`, `ANALYZE_BOUNDARIES`, `ANALYZE_NETWORKING`,
-   `ANALYZE_INTEGRITY`, `ANALYZE_SECURITY`, `ANALYZE_PERFORMANCE`, and
-   `ANALYZE_RECONNAISSANCE` in parallel.
+   `ANALYZE_INTEGRITY`, `ANALYZE_SECURITY`, and `ANALYZE_PERFORMANCE` in parallel.
 3. Publish each successful result internally as `{{VAR:<PROMPT_NAME>_OUTPUT}}`.
 4. Run `COMPARE_AGENT_REPORTS` only after all specialist reports succeed, with each
    report bound by prompt identity rather than completion order.
@@ -44,9 +43,12 @@ Progress from Prompt Runner is forwarded to stderr. Expected input, configuratio
 catalogue, and execution failures return exit code `2`; no comparison or final report
 is published from an incomplete specialist stage.
 
-`ANALYZE_PIPELINE`, `ANALYZE_BOUNDARIES`, `ANALYZE_INTEGRITY`, `ANALYZE_SECURITY`,
-`ANALYZE_PERFORMANCE`, and `ANALYZE_RECONNAISSANCE` use `BALANCED` execution.
-`ANALYZE_NETWORKING` and `COMPARE_AGENT_REPORTS` use `NETWORKED_WORKSPACE` so their
+`ANALYZE_RECONNAISSANCE` is temporarily disabled. Its prompt and specialist variable
+remain configured, but it is not executed or included in the comparison or result.
+
+`ANALYZE_PIPELINE`, `ANALYZE_BOUNDARIES`, `ANALYZE_INTEGRITY`, and
+`ANALYZE_PERFORMANCE` use `BALANCED` execution. `ANALYZE_NETWORKING`,
+`ANALYZE_SECURITY`, and `COMPARE_AGENT_REPORTS` use `NETWORKED_WORKSPACE` so their
 shell checks can reach network resources when justified. All tool-enabled executions
 remain isolated from the source repository by Prompt Runner.
 
@@ -65,9 +67,13 @@ remain isolated from the source repository by Prompt Runner.
 - A prompt output becomes available only after that prompt succeeds. Specialist
   outputs remain opaque and are supplied to the comparison by stable prompt name,
   independent of parallel completion order.
-- `REVIEW_DIRECTORY_CONTEXT` injects the same target boundary into all eight prompts.
+- `REVIEW_DIRECTORY_CONTEXT` injects the same target boundary into all active prompts.
 
 The result contract is [docs/contracts/code-review-result.schema.json](docs/contracts/code-review-result.schema.json).
+During ALPHA, JSON consumers should follow the current schema: `specialist_reviews`
+contains the six active specialist reports. Consumers expecting
+`ANALYZE_RECONNAISSANCE` must update for its temporary removal, including the absence
+of `ANALYZE_RECONNAISSANCE_OUTPUT` from the completed run's variable names.
 Machine-readable ownership and workflow records are under `docs/architecture/modules/`
 and `docs/architecture/features/`.
 

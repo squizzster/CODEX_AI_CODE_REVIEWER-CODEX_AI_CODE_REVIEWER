@@ -11,4 +11,4 @@ prompt: |
   ---
 model: gpt-6-astra
 reasoning_effort: xhigh
-risk_profile: BALANCED
+risk_profile: NETWORKED_WORKSPACE

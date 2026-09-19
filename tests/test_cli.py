@@ -357,10 +357,12 @@ def test_repository_prompts_apply_the_intended_execution_profiles() -> None:
         "ANALYZE_BOUNDARIES": "BALANCED",
         "ANALYZE_NETWORKING": "NETWORKED_WORKSPACE",
         "ANALYZE_INTEGRITY": "BALANCED",
-        "ANALYZE_SECURITY": "BALANCED",
+        "ANALYZE_SECURITY": "NETWORKED_WORKSPACE",
         "ANALYZE_PERFORMANCE": "BALANCED",
-        "ANALYZE_RECONNAISSANCE": "BALANCED",
         "COMPARE_AGENT_REPORTS": "NETWORKED_WORKSPACE",
+    }
+    assert {(prompt.model, prompt.reasoning_effort) for prompt in prompts.values()} == {
+        ("gpt-6-astra", "xhigh")
     }
 
 
@@ -373,16 +375,14 @@ def test_repository_specialists_use_their_named_lens_variables() -> None:
         "ANALYZE_INTEGRITY": "INTEGRITY_SPECIALIST",
         "ANALYZE_SECURITY": "SECURITY_SPECIALIST",
         "ANALYZE_PERFORMANCE": "PERFORMANCE_SPECIALIST",
-        "ANALYZE_RECONNAISSANCE": "RECONNAISSANCE_SPECIALIST",
     }
 
     for prompt_name, lens_variable in lens_variable_by_prompt.items():
         expected_variables = {
             "REVIEW_DIRECTORY_CONTEXT",
+            "ANALYZE_HEADER",
             lens_variable,
         }
-        if prompt_name != "ANALYZE_RECONNAISSANCE":
-            expected_variables.add("ANALYZE_HEADER")
         assert variable_reference_names(prompts[prompt_name].template) == (
             expected_variables
         )
@@ -411,6 +411,8 @@ def test_review_pipeline_runs_specialists_in_parallel_then_compares_reports(
     )
 
     assert tuple(result.specialist_reviews) == SPECIALIST_PROMPTS
+    assert len(result.specialist_reviews) == 6
+    assert "ANALYZE_RECONNAISSANCE" not in runner.calls
     assert result.comparison_review["output"] == "Audited final review"
     assert runner.calls[-1] == COMPARISON_PROMPT
     assert runner.specialist_completion_order == list(reversed(SPECIALIST_PROMPTS))
