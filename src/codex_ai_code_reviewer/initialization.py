@@ -436,6 +436,16 @@ class PromptRunnerCli:
                 self._live_event_stream.write("\n")
             self._live_event_stream.flush()
 
+    def _consume_live_event(self, prompt_name: str, line: str) -> None:
+        """Run the single parse, handle, and forward pipeline for one event."""
+
+        try:
+            event = self._parse_live_event(prompt_name, line)
+            if self._live_event_handler is not None:
+                self._live_event_handler(prompt_name, event)
+        finally:
+            self._forward_live_event(line)
+
     @staticmethod
     def _stop_live_process(process: subprocess.Popen[str]) -> None:
         if process.poll() is not None:
@@ -601,8 +611,6 @@ class PromptRunnerCli:
             command.extend(("--var", f"{name}={value}"))
         command.extend(("--cwd", str(working_directory), "--live", "--detail"))
         process: subprocess.Popen[str] | None = None
-        invocation_id: str | None = None
-        expected_event_sequence = 1
         try:
             with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stdout:
                 process = subprocess.Popen(
@@ -616,33 +624,7 @@ class PromptRunnerCli:
                 )
                 assert process.stderr is not None
                 for line in process.stderr:
-                    try:
-                        event = self._parse_live_event(prompt_name, line)
-                        observed_invocation_id = event.get("invocation_id")
-                        observed_sequence = event.get("event_sequence")
-                        if (
-                            event.get("schema")
-                            != "codex-prompt-runner.live-event/v1"
-                            or not isinstance(observed_invocation_id, str)
-                            or not observed_invocation_id
-                            or observed_sequence != expected_event_sequence
-                        ):
-                            raise InitializationError(
-                                f"Prompt Runner live-event sequence is invalid for "
-                                f"{prompt_name}"
-                            )
-                        if invocation_id is None:
-                            invocation_id = observed_invocation_id
-                        elif observed_invocation_id != invocation_id:
-                            raise InitializationError(
-                                f"Prompt Runner changed live-event invocation for "
-                                f"{prompt_name}"
-                            )
-                        expected_event_sequence += 1
-                        if self._live_event_handler is not None:
-                            self._live_event_handler(prompt_name, event)
-                    finally:
-                        self._forward_live_event(line)
+                    self._consume_live_event(prompt_name, line)
                 return_code = process.wait()
                 stdout.seek(0)
                 result_stdout = stdout.read()

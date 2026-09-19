@@ -5,10 +5,7 @@ import subprocess
 from io import StringIO
 from pathlib import Path
 
-import pytest
-
 from codex_ai_code_reviewer.initialization import (
-    InitializationError,
     PromptDefinition,
     PromptRunnerCli,
 )
@@ -315,62 +312,3 @@ def test_live_run_accepts_custom_executor_without_isolated_workspace(
 
     assert result == {"delivery_mode": "LIVE", "output": "review"}
     assert len(handled) == 1
-
-
-def test_live_run_rejects_event_sequence_before_dispatch(
-    tmp_path: Path, monkeypatch
-) -> None:
-    (tmp_path / "pyproject.toml").write_text("[project]\nname='runner'\nversion='0'\n")
-    handled: list[dict[str, object]] = []
-
-    class FakeProcess:
-        def __init__(self, command, **options):
-            del command, options
-            self.stderr = StringIO(
-                json.dumps(
-                    {
-                        "schema": "codex-prompt-runner.live-event/v1",
-                        "event": "heartbeat",
-                        "event_sequence": 2,
-                        "invocation_id": "invocation",
-                        "phase": "executing",
-                        "isolated_workspace": "/untrusted",
-                    }
-                )
-                + "\n"
-            )
-            self.returncode = 0
-            self.waited = False
-
-        def poll(self):
-            return self.returncode if self.waited else None
-
-        def wait(self, timeout=None):
-            del timeout
-            self.waited = True
-            return self.returncode
-
-        def terminate(self):
-            self.returncode = -15
-            self.waited = True
-
-        def kill(self):
-            self.returncode = -9
-            self.waited = True
-
-    monkeypatch.setattr(subprocess, "Popen", FakeProcess)
-    runner = PromptRunnerCli(
-        tmp_path,
-        live_event_handler=lambda _prompt, event: handled.append(event),
-        live_event_stream=StringIO(),
-    )
-
-    with pytest.raises(InitializationError, match="sequence is invalid"):
-        runner.run_prompt(
-            "CODEX_AI_CODE_REVIEW",
-            "ANALYZE_PIPELINE",
-            variables={"ARG_DIRECTORY": "/project"},
-            working_directory=Path("/project"),
-        )
-
-    assert handled == []

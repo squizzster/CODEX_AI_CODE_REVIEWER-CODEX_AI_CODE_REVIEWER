@@ -14,6 +14,7 @@ from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -31,7 +32,7 @@ from codex_ai_code_reviewer.initialization import (
     prompt_output_variable_name,
     variable_reference_names,
 )
-from codex_ai_code_reviewer.live_events import ReviewWorkspaceInitializer
+from codex_ai_code_reviewer.live_events import create_runner_work_space_from_event
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_ROOT = PROJECT_ROOT / "conf" / "projects"
@@ -491,8 +492,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         runner = PromptRunnerCli(
             runner_root,
-            live_event_handler=ReviewWorkspaceInitializer(
-                _workspace_readmes(analysis_prompts, variable_values)
+            live_event_handler=partial(
+                create_runner_work_space_from_event,
+                _workspace_readmes(analysis_prompts, variable_values),
             ),
         )
         report = initialize_prompt_catalog(projects, runner)

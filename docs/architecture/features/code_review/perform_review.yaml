@@ -40,7 +40,7 @@ verification:
   - uv build
   - mva validate
 open_questions:
-  - replace the bounded startup wait with an acknowledged workspace-ready handshake before Codex launch
+  - add an acknowledged workspace-ready handshake before Codex launch
 extensions:
   prompt_project: CODEX_AI_CODE_REVIEW
   specialist_prompts:
@@ -59,9 +59,9 @@ extensions:
     prompt_delivery_mode: LIVE
     live_event_consumption:
       timing: real_time
-      validation: schema, invocation identity, contiguous event sequence, and workspace paths
-      stderr: forward original JSONL after interception
+      pipeline: parse one JSONL event, invoke its handler, then forward it to stderr
       workspace_trigger: initial executing event containing isolated_workspace
+      workspace_operation: create_runner_work_space returns 1 or 0
       workspace_directories:
         - final_reports
         - tmp
@@ -107,4 +107,4 @@ extensions:
     - specialist reports cross the Prompt Runner boundary as process arguments
     - runs have no persisted resume state
     - generated reports require external retention management
-    - workspace initialization uses a five-second bounded startup wait; an acknowledged workspace-ready handshake remains a TODO
+    - an acknowledged workspace-ready handshake remains a TODO
