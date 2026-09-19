@@ -19,6 +19,7 @@ from codex_ai_code_reviewer.cli import (
     SPECIALIST_PROMPTS,
     SPECIALIST_VARIABLE_BY_PROMPT,
     VARIABLES_ROOT,
+    WORKSPACE_README_APPEND_VARIABLE,
     ReviewExecutionOverrides,
     _analysis_prompt_definitions,
     _enter_review_directory,
@@ -560,9 +561,19 @@ def test_workspace_readmes_use_specialist_context_and_comparison_prompt(
     readmes = _workspace_readmes(prompts, variables)
 
     assert set(readmes) == set(ANALYSIS_PROMPTS)
+    appendix = variables[WORKSPACE_README_APPEND_VARIABLE].strip()
     for prompt_name, variable_name in SPECIALIST_VARIABLE_BY_PROMPT.items():
-        assert readmes[prompt_name] == variables[variable_name]
-    assert readmes[COMPARISON_PROMPT] == prompts[COMPARISON_PROMPT].template
+        assert readmes[prompt_name] == (
+            f"{variables[variable_name].rstrip()}\n\n{appendix}"
+        )
+    assert readmes[COMPARISON_PROMPT] == (
+        f"{prompts[COMPARISON_PROMPT].template.rstrip()}\n\n{appendix}"
+    )
+
+
+def test_workspace_readmes_require_shared_appendix(tmp_path: Path) -> None:
+    with pytest.raises(InitializationError, match="ADD_TO_README_MD"):
+        _workspace_readmes(_prompt_definitions(tmp_path), {})
 
 
 def test_comparison_prompt_uses_named_specialist_output_variables() -> None:

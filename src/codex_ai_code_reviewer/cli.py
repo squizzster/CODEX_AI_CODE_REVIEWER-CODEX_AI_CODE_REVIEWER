@@ -63,6 +63,7 @@ SPECIALIST_VARIABLE_BY_PROMPT = {
 }
 COMPARISON_PROMPT = "COMPARE_AGENT_REPORTS"
 ANALYSIS_PROMPTS = (*SPECIALIST_PROMPTS, COMPARISON_PROMPT)
+WORKSPACE_README_APPEND_VARIABLE = "ADD_TO_README_MD"
 
 
 class ReviewExecutionGateway(Protocol):
@@ -324,12 +325,21 @@ def _workspace_readmes(
 ) -> dict[str, str]:
     """Build the prompt-specific context copied into isolated workspaces."""
 
-    return {
+    readme_appendix = variables.get(WORKSPACE_README_APPEND_VARIABLE)
+    if readme_appendix is None:
+        raise InitializationError(
+            f"Missing workspace README variable: {WORKSPACE_README_APPEND_VARIABLE}"
+        )
+    prompt_context = {
         **{
             prompt_name: variables[variable_name]
             for prompt_name, variable_name in SPECIALIST_VARIABLE_BY_PROMPT.items()
         },
         COMPARISON_PROMPT: prompts[COMPARISON_PROMPT].template,
+    }
+    return {
+        prompt_name: f"{context.rstrip()}\n\n{readme_appendix.strip()}"
+        for prompt_name, context in prompt_context.items()
     }
 
 
