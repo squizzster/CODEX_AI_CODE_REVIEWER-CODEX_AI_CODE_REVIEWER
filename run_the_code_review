@@ -2,24 +2,37 @@
 set -euo pipefail
 
 usage() {
-    echo "usage: ./run_the_code_review [--model MODEL] [--reasoning EFFORT] <directory>" >&2
+    echo "usage: ./run_the_code_review [--model MODEL] [--reasoning EFFORT] [--reports-directory DIRECTORY] <directory>" >&2
 }
 
 arguments=("$@")
 review_directory_argument=""
 review_directory_index=-1
+reports_directory_argument=""
+reports_directory_index=-1
+reports_directory_inline=false
 index=0
 while (( index < ${#arguments[@]} )); do
     argument=${arguments[index]}
     case "$argument" in
-        --model|--reasoning)
+        --model|--reasoning|--reports-directory)
             if (( index + 1 >= ${#arguments[@]} )); then
                 usage
                 exit 2
             fi
+            if [[ "$argument" == "--reports-directory" ]]; then
+                reports_directory_argument=${arguments[index + 1]}
+                reports_directory_index=$((index + 1))
+            fi
             ((index += 2))
             ;;
         --model=*|--reasoning=*)
+            ((index += 1))
+            ;;
+        --reports-directory=*)
+            reports_directory_argument=${argument#*=}
+            reports_directory_index=$index
+            reports_directory_inline=true
             ((index += 1))
             ;;
         -*)
@@ -49,6 +62,18 @@ review_directory=$(cd -- "$review_directory_argument" && pwd -P) || {
     exit 2
 }
 arguments[review_directory_index]=$review_directory
+
+if [[ -n "$reports_directory_argument" ]]; then
+    reports_directory=$(realpath -m -- "$reports_directory_argument") || {
+        echo "error: reports directory cannot be resolved: $reports_directory_argument" >&2
+        exit 2
+    }
+    if [[ "$reports_directory_inline" == true ]]; then
+        arguments[reports_directory_index]="--reports-directory=$reports_directory"
+    else
+        arguments[reports_directory_index]=$reports_directory
+    fi
+fi
 
 cd -- "$review_directory"
 exec uv run --project "$reviewer_root" python \

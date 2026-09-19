@@ -1,22 +1,28 @@
 schema_version: 1
 id: code-review.perform-review
 module: code-review
-purpose: Produce one audited review from six independent specialist reports.
+purpose: Generate targeted review questions, then produce and persist six independent specialist reports and one audited comparison.
 status: active
 shape: workflow
 entrypoints:
   - kind: cli
-    operation: ./run_the_code_review [--model MODEL] [--reasoning EFFORT] <directory>
+    operation: ./run_the_code_review [--model MODEL] [--reasoning EFFORT] [--reports-directory DIRECTORY] <directory>
   - kind: cli
-    operation: ./perform_a_code_review.py [--model MODEL] [--reasoning EFFORT] <directory>
+    operation: ./perform_a_code_review.py [--model MODEL] [--reasoning EFFORT] [--reports-directory DIRECTORY] <directory>
 inputs:
   - existing readable and traversable review directory
   - repository-owned prompt and variable YAML
   - optional run-scoped model and reasoning overrides
+  - optional reports root override
 outcomes:
   - versioned JSON result on stdout
-  - audited Markdown report at /tmp/final_review.md
-  - each completed prompt owns one run-local <PROMPT_NAME>_OUTPUT variable
+  - one reports/<project_name>/<review_started_at_utc>/ directory
+  - one <PROMPT_NAME>_OUTPUT.md file for each specialist and the comparison
+  - one reconnaissance question block routed exclusively to each matching specialist
+  - each report-producing prompt owns one run-local <PROMPT_NAME>_OUTPUT variable
+  - each execution derives FINAL_OUTPUT_PRODUCED from its one Markdown report, falling back to the Prompt Runner final turn when none exists
+  - each prompt output variable contains that execution's FINAL_OUTPUT_PRODUCED value
+  - each stock-executor workspace is initialized from its first location-bearing live event
 failures:
   - invalid directory, configuration, or variable graph returns exit code 2
   - catalogue or execution failure returns exit code 2
@@ -29,13 +35,15 @@ data:
     - reviewed directory through Prompt Runner
   writes:
     - Prompt Runner catalogue state
-    - /tmp/final_review.md after successful comparison
+    - Prompt Runner isolated-workspace/{source_code_read_only_link,outputs,final_md_report,tmp,temp_scripts,scratch_pad,README.md}
+    - reports/<project_name>/<review_started_at_utc> after successful comparison
 verification:
   - uv run pytest
   - uv run ruff check .
   - uv build
   - mva validate
-open_questions: []
+open_questions:
+  - add an acknowledged workspace-ready handshake before Codex launch
 extensions:
   prompt_project: CODEX_AI_CODE_REVIEW
   specialist_prompts:
@@ -45,13 +53,38 @@ extensions:
     - ANALYZE_INTEGRITY
     - ANALYZE_SECURITY
     - ANALYZE_PERFORMANCE
-  disabled_specialist_prompts:
-    - ANALYZE_RECONNAISSANCE
+  reconnaissance_prompt: ANALYZE_RECONNAISSANCE
   comparison_prompt: COMPARE_AGENT_REPORTS
   execution:
+    stages:
+      - reconnaissance
+      - six_parallel_specialists
+      - comparison
     specialist_concurrency: 6
     comparison_requires_all_specialists: true
     prompt_delivery_mode: LIVE
+    live_event_consumption:
+      timing: real_time
+      pipeline: parse one JSONL event, invoke its handler, then forward it to stderr
+      workspace_trigger: initial executing event containing isolated_workspace
+      workspace_operation: create_runner_work_space returns 1 or 0
+      source_code_link: source_code_read_only_link -> reviewed directory
+      workspace_directories:
+        - outputs
+        - tmp
+        - temp_scripts
+        - scratch_pad
+      final_report_link: final_md_report -> outputs
+      output_contract:
+        scan: direct children of outputs
+        ignored_entries: every non-Markdown entry
+        markdown_selection: use exactly one; fall back to final message when zero; reject more than one
+        file_requirements: nonempty regular file, not a symlink
+        prompt_runner_final_message: retained as execution metadata and used as the zero-file fallback
+        final_output_produced: one Markdown file when present, otherwise the nonempty final turn; fail when neither exists
+      workspace_readme: resolved specialist instruction or comparison prompt
+      cached_result_creates_workspace: false
+      custom_executor_without_isolated_workspace: final message supplies the report
     default_model: gpt-6-astra
     default_reasoning_effort: xhigh
     invocation_overrides_apply_to_all_prompts: true
@@ -69,6 +102,22 @@ extensions:
         - ANALYZE_INTEGRITY_OUTPUT
         - ANALYZE_SECURITY_OUTPUT
         - ANALYZE_PERFORMANCE_OUTPUT
+    reconnaissance_questions:
+      source: ANALYZE_RECONNAISSANCE FINAL_OUTPUT_PRODUCED
+      delimiters: <PROMPT_NAME>...</PROMPT_NAME>
+      required_blocks: 6
+      duplicate_or_missing_block: fail_before_specialists
+      specialist_variable: QUESTIONS
+      routing: each specialist receives only its identically named block
+      published_report: false
+    report_publication:
+      default_root: reports/
+      directory_shape: <project_name>/<YYYY-MM-DDTHH-MM-SS.hundredthsZ>/
+      run_id_meaning: review orchestration start time in UTC
+      file_naming: <PROMPT_NAME>_OUTPUT.md
+      requires_complete_pipeline: true
+      publication: atomic_directory_rename
+      staging_visibility: hidden_until_complete
     risk_profiles:
       ANALYZE_PIPELINE: BALANCED
       ANALYZE_BOUNDARIES: BALANCED
@@ -80,4 +129,5 @@ extensions:
   operational_limits:
     - specialist reports cross the Prompt Runner boundary as process arguments
     - runs have no persisted resume state
-    - the Markdown publication path is fixed
+    - generated reports require external retention management
+    - an acknowledged workspace-ready handshake remains a TODO

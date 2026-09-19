@@ -15,18 +15,27 @@ from codex_ai_code_reviewer.cli import (
     ANALYSIS_PROMPTS,
     COMPARISON_PROMPT,
     CONFIG_ROOT,
+    QUESTIONS_VARIABLE,
+    RECONNAISSANCE_PROMPT,
+    REPORT_PROMPTS,
     RESULT_SCHEMA,
     SPECIALIST_PROMPTS,
+    SPECIALIST_VARIABLE_BY_PROMPT,
     VARIABLES_ROOT,
+    WORKSPACE_README_APPEND_VARIABLE,
     ReviewExecutionOverrides,
     _analysis_prompt_definitions,
     _enter_review_directory,
+    _extract_specialist_question_blocks,
+    _final_output_produced,
     _parser,
+    _publish_reports,
     _require_expected_execution,
     _require_pipeline_variable_contract,
     _review_directory,
+    _review_run_id,
     _run_review_pipeline,
-    _write_final_review,
+    _workspace_readmes,
 )
 from codex_ai_code_reviewer.initialization import (
     InitializationError,
@@ -46,13 +55,24 @@ def _prompt_definitions(tmp_path: Path) -> dict[str, PromptDefinition]:
             project_name=ANALYSIS_PROJECT,
             prompt_name=prompt_name,
             source_path=tmp_path / f"{prompt_name}.yaml",
-            template=f"Run {prompt_name}",
+            template=(
+                f"{{{{VAR:{QUESTIONS_VARIABLE}}}}}\nRun {prompt_name}"
+                if prompt_name in SPECIALIST_PROMPTS
+                else f"Run {prompt_name}"
+            ),
             model="gpt-6-astra",
             reasoning_effort="xhigh",
             risk_profile="BALANCED",
         )
         for prompt_name in ANALYSIS_PROMPTS
     }
+
+
+def _reconnaissance_output() -> str:
+    return "\n\n".join(
+        f"<{prompt_name}>\n{prompt_name} focused question?\n</{prompt_name}>"
+        for prompt_name in SPECIALIST_PROMPTS
+    )
 
 
 def _successful_review(
@@ -71,7 +91,8 @@ def _successful_review(
 
 
 class ParallelReviewRunner:
-    def __init__(self) -> None:
+    def __init__(self, workspace_root: Path) -> None:
+        self._workspace_root = workspace_root
         self._specialist_start = Barrier(len(SPECIALIST_PROMPTS))
         self._lock = Lock()
         self._completion_order = tuple(reversed(SPECIALIST_PROMPTS))
@@ -81,6 +102,7 @@ class ParallelReviewRunner:
         self.calls: list[str] = []
         self.execution_options: list[tuple[str, str | None, str | None]] = []
         self.comparison_variables: dict[str, str] | None = None
+        self.specialist_questions: dict[str, str] = {}
         self.specialist_completion_order: list[str] = []
 
     def run_prompt(
@@ -98,28 +120,57 @@ class ParallelReviewRunner:
         with self._lock:
             self.calls.append(prompt_name)
             self.execution_options.append((prompt_name, model, reasoning_effort))
+        workspace = self._workspace_root / prompt_name
+        output_directory = workspace / "outputs"
+        output_directory.mkdir(parents=True)
+        if prompt_name == RECONNAISSANCE_PROMPT:
+            (output_directory / "reconnaissance.md").write_text(
+                _reconnaissance_output(), encoding="utf-8"
+            )
+            review = _successful_review(
+                "Reconnaissance handoff",
+                model=model or "gpt-6-astra",
+                reasoning_effort=reasoning_effort or "xhigh",
+            )
+            review["isolated_workspace"] = str(workspace)
+            return review
         if prompt_name in SPECIALIST_PROMPTS:
+            with self._lock:
+                self.specialist_questions[prompt_name] = variables[QUESTIONS_VARIABLE]
             self._specialist_start.wait(timeout=2)
             completion_index = self._completion_order.index(prompt_name)
             if completion_index:
                 previous_prompt = self._completion_order[completion_index - 1]
                 assert self._completion_events[previous_prompt].wait(timeout=2)
+            report = (
+                f"Detailed report from {prompt_name}; "
+                "literal {{VAR:ARG_DIRECTORY}}"
+            )
+            (output_directory / "specialist-review.md").write_text(
+                report, encoding="utf-8"
+            )
             review = _successful_review(
-                f"Report from {prompt_name}; literal {{{{VAR:ARG_DIRECTORY}}}}",
+                f"Handoff from {prompt_name}",
                 model=model or "gpt-6-astra",
                 reasoning_effort=reasoning_effort or "xhigh",
             )
+            review["isolated_workspace"] = str(workspace)
             with self._lock:
                 self.specialist_completion_order.append(prompt_name)
             self._completion_events[prompt_name].set()
             return review
         assert prompt_name == COMPARISON_PROMPT
         self.comparison_variables = variables
-        return _successful_review(
+        (output_directory / "integrated-review.md").write_text(
+            "Integrated detailed review", encoding="utf-8"
+        )
+        review = _successful_review(
             "Audited final review",
             model=model or "gpt-6-astra",
             reasoning_effort=reasoning_effort or "xhigh",
         )
+        review["isolated_workspace"] = str(workspace)
+        return review
 
 
 @pytest.mark.parametrize(
@@ -137,12 +188,28 @@ def test_parser_accepts_execution_overrides_before_or_after_directory(
     assert arguments.directory == Path("/project")
     assert arguments.model == "gpt-5.6-luna"
     assert arguments.reasoning_effort == "max"
+    assert arguments.reports_directory.name == "reports"
 
 
 def test_review_directory_resolves_an_existing_readable_directory(
     tmp_path: Path,
 ) -> None:
     assert _review_directory(tmp_path) == tmp_path.resolve()
+
+
+def test_review_run_id_is_utc_and_lexically_sortable() -> None:
+    run_ids = [
+        _review_run_id(0),
+        _review_run_id(10_000_000),
+        _review_run_id(1_000_000_000),
+    ]
+
+    assert run_ids == [
+        "1970-01-01T00-00-00.00Z",
+        "1970-01-01T00-00-00.01Z",
+        "1970-01-01T00-00-01.00Z",
+    ]
+    assert sorted(run_ids) == run_ids
 
 
 def test_review_directory_must_exist(tmp_path: Path) -> None:
@@ -281,6 +348,54 @@ def test_shell_launcher_forwards_overrides_in_either_position(
     assert forwarded[6:] == expected_arguments
 
 
+@pytest.mark.parametrize("inline", [True, False])
+def test_shell_launcher_resolves_reports_directory_before_entering_target(
+    tmp_path: Path,
+    inline: bool,
+) -> None:
+    reviewer_root = Path(__file__).parents[1].resolve()
+    review_directory = tmp_path / "target"
+    fake_bin = tmp_path / "bin"
+    observation = tmp_path / "launcher-observation"
+    review_directory.mkdir()
+    fake_bin.mkdir()
+    fake_uv = fake_bin / "uv"
+    fake_uv.write_text(
+        "#!/usr/bin/env bash\n"
+        'printf \'%s\\n\' "$@" >"$LAUNCHER_OBSERVATION"\n',
+        encoding="utf-8",
+    )
+    fake_uv.chmod(0o755)
+    environment = os.environ | {
+        "LAUNCHER_OBSERVATION": str(observation),
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+    }
+    reports_option = (
+        ["--reports-directory=relative-reports"]
+        if inline
+        else ["--reports-directory", "relative-reports"]
+    )
+
+    completed = subprocess.run(
+        [reviewer_root / "run_the_code_review", *reports_option, review_directory],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    forwarded = observation.read_text(encoding="utf-8").splitlines()[5:]
+    expected_reports_directory = tmp_path / "relative-reports"
+    expected_option = (
+        [f"--reports-directory={expected_reports_directory}"]
+        if inline
+        else ["--reports-directory", str(expected_reports_directory)]
+    )
+    assert forwarded == [*expected_option, str(review_directory)]
+
+
 def test_execution_must_match_configured_policy(tmp_path: Path) -> None:
     prompt = PromptDefinition(
         project_name="CODEX_AI_CODE_REVIEW",
@@ -317,6 +432,164 @@ def test_execution_override_becomes_the_expected_runtime_policy(tmp_path: Path) 
         _require_expected_execution(result, prompt, overrides)
 
 
+def test_workspace_report_is_the_authoritative_prompt_output(tmp_path: Path) -> None:
+    prompt = _prompt_definitions(tmp_path)["ANALYZE_PIPELINE"]
+    workspace = tmp_path / "isolated-workspace"
+    outputs = workspace / "outputs"
+    outputs.mkdir(parents=True)
+    (outputs / "probe-results.jsonl").write_text("{}\n", encoding="utf-8")
+    (outputs / "pipeline-review.md").write_text(
+        "Complete pipeline report\n", encoding="utf-8"
+    )
+    review = _successful_review("Small completion handoff")
+    review["isolated_workspace"] = str(workspace)
+
+    assert (
+        _final_output_produced(review, prompt)
+        == "Complete pipeline report\n"
+    )
+
+
+def test_workspace_report_does_not_require_a_final_turn(tmp_path: Path) -> None:
+    prompt = _prompt_definitions(tmp_path)["ANALYZE_PIPELINE"]
+    workspace = tmp_path / "isolated-workspace"
+    outputs = workspace / "outputs"
+    outputs.mkdir(parents=True)
+    (outputs / "pipeline-review.md").write_text(
+        "Complete file-backed report\n", encoding="utf-8"
+    )
+    review = _successful_review("")
+    review["isolated_workspace"] = str(workspace)
+
+    assert _final_output_produced(review, prompt) == "Complete file-backed report\n"
+
+
+@pytest.mark.parametrize(
+    ("reports", "message"),
+    [
+        ({"one.md": "one", "two.md": "two"}, "found 2"),
+        ({"empty.md": "  \n"}, "is empty"),
+    ],
+)
+def test_workspace_report_requires_exactly_one_nonempty_markdown_file(
+    tmp_path: Path, reports: dict[str, str], message: str
+) -> None:
+    prompt = _prompt_definitions(tmp_path)["ANALYZE_PIPELINE"]
+    workspace = tmp_path / "isolated-workspace"
+    outputs = workspace / "outputs"
+    outputs.mkdir(parents=True)
+    for name, content in reports.items():
+        (outputs / name).write_text(content, encoding="utf-8")
+    review = _successful_review("Small completion handoff")
+    review["isolated_workspace"] = str(workspace)
+
+    with pytest.raises(InitializationError, match=message):
+        _final_output_produced(review, prompt)
+
+
+def test_workspace_report_falls_back_to_handoff_when_outputs_has_no_markdown(
+    tmp_path: Path,
+) -> None:
+    prompt = _prompt_definitions(tmp_path)["ANALYZE_PIPELINE"]
+    workspace = tmp_path / "isolated-workspace"
+    outputs = workspace / "outputs"
+    outputs.mkdir(parents=True)
+    (outputs / "probe-results.jsonl").write_text("{}\n", encoding="utf-8")
+    review = _successful_review("Complete report returned as the last message")
+    review["isolated_workspace"] = str(workspace)
+
+    assert _final_output_produced(review, prompt) == review["output"]
+
+
+def test_final_output_requires_markdown_or_a_final_turn(tmp_path: Path) -> None:
+    prompt = _prompt_definitions(tmp_path)["ANALYZE_PIPELINE"]
+    workspace = tmp_path / "isolated-workspace"
+    outputs = workspace / "outputs"
+    outputs.mkdir(parents=True)
+    (outputs / "probe-results.jsonl").write_text("{}\n", encoding="utf-8")
+    review = _successful_review("")
+    review["isolated_workspace"] = str(workspace)
+
+    with pytest.raises(InitializationError, match="returned no report"):
+        _final_output_produced(review, prompt)
+
+
+def test_report_falls_back_to_handoff_without_an_isolated_workspace(
+    tmp_path: Path,
+) -> None:
+    prompt = _prompt_definitions(tmp_path)["ANALYZE_PIPELINE"]
+    review = _successful_review("Custom executor report")
+
+    assert _final_output_produced(review, prompt) == "Custom executor report"
+
+
+def test_workspace_report_rejects_a_markdown_symlink(tmp_path: Path) -> None:
+    prompt = _prompt_definitions(tmp_path)["ANALYZE_PIPELINE"]
+    workspace = tmp_path / "isolated-workspace"
+    outputs = workspace / "outputs"
+    outputs.mkdir(parents=True)
+    outside_report = tmp_path / "outside.md"
+    outside_report.write_text("outside", encoding="utf-8")
+    (outputs / "report.md").symlink_to(outside_report)
+    review = _successful_review("Small completion handoff")
+    review["isolated_workspace"] = str(workspace)
+
+    with pytest.raises(InitializationError, match="regular file"):
+        _final_output_produced(review, prompt)
+
+
+def test_reconnaissance_extracts_one_matching_block_per_specialist() -> None:
+    output = f"Survey introduction\n\n{_reconnaissance_output()}\n\nSurvey limits"
+
+    blocks = _extract_specialist_question_blocks(output)
+
+    assert tuple(blocks) == SPECIALIST_PROMPTS
+    for prompt_name, block in blocks.items():
+        assert block == (
+            f"<{prompt_name}>\n"
+            f"{prompt_name} focused question?\n"
+            f"</{prompt_name}>"
+        )
+        assert all(
+            f"<{other_prompt}>" not in block
+            for other_prompt in SPECIALIST_PROMPTS
+            if other_prompt != prompt_name
+        )
+
+
+@pytest.mark.parametrize(
+    ("output", "message"),
+    [
+        ("", "ANALYZE_PIPELINE has 0 opening and 0 closing tags"),
+        (
+            _reconnaissance_output()
+            + "\n<ANALYZE_PIPELINE>duplicate?</ANALYZE_PIPELINE>",
+            "ANALYZE_PIPELINE has 2 opening and 2 closing tags",
+        ),
+        (
+            _reconnaissance_output().replace(
+                "ANALYZE_INTEGRITY focused question?", "   "
+            ),
+            "ANALYZE_INTEGRITY has an empty questions block",
+        ),
+        (
+            _reconnaissance_output().replace(
+                "<ANALYZE_SECURITY>\nANALYZE_SECURITY focused question?\n"
+                "</ANALYZE_SECURITY>",
+                "</ANALYZE_SECURITY>\nANALYZE_SECURITY focused question?\n"
+                "<ANALYZE_SECURITY>",
+            ),
+            "ANALYZE_SECURITY closes before its questions block opens",
+        ),
+    ],
+)
+def test_reconnaissance_rejects_missing_duplicate_or_empty_blocks(
+    output: str, message: str
+) -> None:
+    with pytest.raises(InitializationError, match=message):
+        _extract_specialist_question_blocks(output)
+
+
 @pytest.mark.parametrize("missing_prompt", ANALYSIS_PROMPTS)
 def test_analysis_configuration_requires_every_pipeline_prompt(
     tmp_path: Path, missing_prompt: str
@@ -342,7 +615,12 @@ def test_repository_prompts_share_one_resolved_directory_context(
         assert "Your base critical project review directory is:" not in prompt.template
 
     values = compose_variable_values(configured_variables, tmp_path)
+    base_directory_context = values["BASE_CRITICAL_DIRECTORY"]
     context = values["REVIEW_DIRECTORY_CONTEXT"]
+    assert base_directory_context in context
+    assert base_directory_context.count(str(tmp_path)) == 1
+    assert context.count(str(tmp_path)) == 2
+    assert "{{VAR:" not in base_directory_context
     assert str(tmp_path) in context
     assert "{{VAR:" not in context
 
@@ -353,6 +631,7 @@ def test_repository_prompts_apply_the_intended_execution_profiles() -> None:
     assert {
         prompt_name: prompt.risk_profile for prompt_name, prompt in prompts.items()
     } == {
+        "ANALYZE_RECONNAISSANCE": "BALANCED",
         "ANALYZE_PIPELINE": "BALANCED",
         "ANALYZE_BOUNDARIES": "BALANCED",
         "ANALYZE_NETWORKING": "NETWORKED_WORKSPACE",
@@ -361,24 +640,27 @@ def test_repository_prompts_apply_the_intended_execution_profiles() -> None:
         "ANALYZE_PERFORMANCE": "BALANCED",
         "COMPARE_AGENT_REPORTS": "NETWORKED_WORKSPACE",
     }
-    assert {(prompt.model, prompt.reasoning_effort) for prompt in prompts.values()} == {
-        ("gpt-6-astra", "xhigh")
+    assert {
+        prompt_name: (prompt.model, prompt.reasoning_effort)
+        for prompt_name, prompt in prompts.items()
+    } == {
+        "ANALYZE_RECONNAISSANCE": ("gpt-6-astra", "xhigh"),
+        "ANALYZE_PIPELINE": ("gpt-6-astra", "xhigh"),
+        "ANALYZE_BOUNDARIES": ("gpt-6-astra", "xhigh"),
+        "ANALYZE_NETWORKING": ("gpt-6-astra", "xhigh"),
+        "ANALYZE_INTEGRITY": ("gpt-6-astra", "xhigh"),
+        "ANALYZE_SECURITY": ("gpt-6-astra", "xhigh"),
+        "ANALYZE_PERFORMANCE": ("gpt-6-astra", "xhigh"),
+        "COMPARE_AGENT_REPORTS": ("gpt-6-astra", "max"),
     }
 
 
 def test_repository_specialists_use_their_named_lens_variables() -> None:
     prompts = _analysis_prompt_definitions(load_project_definitions(CONFIG_ROOT))
-    lens_variable_by_prompt = {
-        "ANALYZE_PIPELINE": "PIPELINE_SPECIALIST",
-        "ANALYZE_BOUNDARIES": "BOUNDARIES_SPECIALIST",
-        "ANALYZE_NETWORKING": "NETWORKING_SPECIALIST",
-        "ANALYZE_INTEGRITY": "INTEGRITY_SPECIALIST",
-        "ANALYZE_SECURITY": "SECURITY_SPECIALIST",
-        "ANALYZE_PERFORMANCE": "PERFORMANCE_SPECIALIST",
-    }
 
-    for prompt_name, lens_variable in lens_variable_by_prompt.items():
+    for prompt_name, lens_variable in SPECIALIST_VARIABLE_BY_PROMPT.items():
         expected_variables = {
+            QUESTIONS_VARIABLE,
             "REVIEW_DIRECTORY_CONTEXT",
             "ANALYZE_HEADER",
             lens_variable,
@@ -386,6 +668,48 @@ def test_repository_specialists_use_their_named_lens_variables() -> None:
         assert variable_reference_names(prompts[prompt_name].template) == (
             expected_variables
         )
+
+
+def test_reconnaissance_instructions_define_every_specialist_block(
+    tmp_path: Path,
+) -> None:
+    variables = compose_variable_values(
+        load_variable_definitions(VARIABLES_ROOT), tmp_path
+    )
+    instructions = variables["RECONNAISSANCE_SPECIALIST"]
+
+    for prompt_name in SPECIALIST_PROMPTS:
+        assert f"<{prompt_name}>" in instructions
+        assert f"</{prompt_name}>" in instructions
+
+
+def test_workspace_readmes_use_specialist_context_and_comparison_prompt(
+    tmp_path: Path,
+) -> None:
+    prompts = _analysis_prompt_definitions(load_project_definitions(CONFIG_ROOT))
+    variables = compose_variable_values(
+        load_variable_definitions(VARIABLES_ROOT), tmp_path
+    )
+
+    readmes = _workspace_readmes(prompts, variables)
+
+    assert set(readmes) == set(ANALYSIS_PROMPTS)
+    appendix = variables[WORKSPACE_README_APPEND_VARIABLE].strip()
+    assert readmes[RECONNAISSANCE_PROMPT] == (
+        f"{variables['RECONNAISSANCE_SPECIALIST'].rstrip()}\n\n{appendix}"
+    )
+    for prompt_name, variable_name in SPECIALIST_VARIABLE_BY_PROMPT.items():
+        assert readmes[prompt_name] == (
+            f"{variables[variable_name].rstrip()}\n\n{appendix}"
+        )
+    assert readmes[COMPARISON_PROMPT] == (
+        f"{prompts[COMPARISON_PROMPT].template.rstrip()}\n\n{appendix}"
+    )
+
+
+def test_workspace_readmes_require_shared_appendix(tmp_path: Path) -> None:
+    with pytest.raises(InitializationError, match="ADD_TO_README_MD"):
+        _workspace_readmes(_prompt_definitions(tmp_path), {})
 
 
 def test_comparison_prompt_uses_named_specialist_output_variables() -> None:
@@ -400,7 +724,7 @@ def test_comparison_prompt_uses_named_specialist_output_variables() -> None:
 def test_review_pipeline_runs_specialists_in_parallel_then_compares_reports(
     tmp_path: Path,
 ) -> None:
-    runner = ParallelReviewRunner()
+    runner = ParallelReviewRunner(tmp_path)
     prompts = _prompt_definitions(tmp_path)
 
     result = _run_review_pipeline(
@@ -412,16 +736,20 @@ def test_review_pipeline_runs_specialists_in_parallel_then_compares_reports(
 
     assert tuple(result.specialist_reviews) == SPECIALIST_PROMPTS
     assert len(result.specialist_reviews) == 6
-    assert "ANALYZE_RECONNAISSANCE" not in runner.calls
+    assert runner.calls[0] == RECONNAISSANCE_PROMPT
     assert result.comparison_review["output"] == "Audited final review"
     assert runner.calls[-1] == COMPARISON_PROMPT
     assert runner.specialist_completion_order == list(reversed(SPECIALIST_PROMPTS))
+    assert runner.specialist_questions == _extract_specialist_question_blocks(
+        _reconnaissance_output()
+    )
     assert runner.comparison_variables is not None
     for prompt_name in SPECIALIST_PROMPTS:
         variable_name = prompt_output_variable_name(prompt_name)
         assert (
             runner.comparison_variables[variable_name]
-            == f"Report from {prompt_name}; literal {{{{VAR:ARG_DIRECTORY}}}}"
+            == f"Detailed report from {prompt_name}; literal "
+            "{{VAR:ARG_DIRECTORY}}"
         )
     assert not any(
         variable_name.startswith("AGENT_")
@@ -430,11 +758,12 @@ def test_review_pipeline_runs_specialists_in_parallel_then_compares_reports(
     assert result.prompt_output_variables == {
         **{
             prompt_output_variable_name(prompt_name): (
-                f"Report from {prompt_name}; literal {{{{VAR:ARG_DIRECTORY}}}}"
+                f"Detailed report from {prompt_name}; "
+                "literal {{VAR:ARG_DIRECTORY}}"
             )
             for prompt_name in SPECIALIST_PROMPTS
         },
-        "COMPARE_AGENT_REPORTS_OUTPUT": "Audited final review",
+        "COMPARE_AGENT_REPORTS_OUTPUT": "Integrated detailed review",
     }
 
 
@@ -446,7 +775,7 @@ def test_pipeline_rejects_a_misspelled_or_unavailable_output_reference(
         prompts[COMPARISON_PROMPT],
         template="{{VAR:ANALYZE_PIPELINE_OUTPUTT}}",
     )
-    runner = ParallelReviewRunner()
+    runner = ParallelReviewRunner(tmp_path)
 
     with pytest.raises(
         InitializationError,
@@ -462,7 +791,66 @@ def test_pipeline_rejects_a_misspelled_or_unavailable_output_reference(
     assert runner.calls == []
 
 
-def test_pipeline_rejects_caller_supplied_prompt_output(tmp_path: Path) -> None:
+def test_pipeline_requires_every_specialist_to_receive_questions(
+    tmp_path: Path,
+) -> None:
+    prompts = _prompt_definitions(tmp_path)
+    prompts["ANALYZE_SECURITY"] = replace(
+        prompts["ANALYZE_SECURITY"], template="Run ANALYZE_SECURITY"
+    )
+    runner = ParallelReviewRunner(tmp_path)
+
+    with pytest.raises(InitializationError, match="must reference QUESTIONS"):
+        _run_review_pipeline(
+            runner,
+            prompts,
+            variables={"ARG_DIRECTORY": str(tmp_path)},
+            working_directory=tmp_path,
+        )
+
+    assert runner.calls == []
+
+
+def test_invalid_reconnaissance_stops_before_specialists(tmp_path: Path) -> None:
+    prompts = _prompt_definitions(tmp_path)
+
+    class InvalidReconnaissanceRunner:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def run_prompt(
+            self,
+            project_name: str,
+            prompt_name: str,
+            *,
+            variables: dict[str, str],
+            working_directory: Path,
+            model: str | None = None,
+            reasoning_effort: str | None = None,
+        ) -> dict[str, Any]:
+            self.calls.append(prompt_name)
+            return _successful_review("No structured question blocks")
+
+    runner = InvalidReconnaissanceRunner()
+
+    with pytest.raises(InitializationError, match="Reconnaissance did not produce"):
+        _run_review_pipeline(
+            runner,
+            prompts,
+            variables={"ARG_DIRECTORY": str(tmp_path)},
+            working_directory=tmp_path,
+        )
+
+    assert runner.calls == [RECONNAISSANCE_PROMPT]
+
+
+@pytest.mark.parametrize(
+    "runtime_variable",
+    ["ANALYZE_PIPELINE_OUTPUT", QUESTIONS_VARIABLE],
+)
+def test_pipeline_rejects_caller_supplied_runtime_variable(
+    tmp_path: Path, runtime_variable: str
+) -> None:
     prompts = _prompt_definitions(tmp_path)
 
     with pytest.raises(InitializationError, match="generated at runtime"):
@@ -470,13 +858,13 @@ def test_pipeline_rejects_caller_supplied_prompt_output(tmp_path: Path) -> None:
             prompts,
             {
                 "ARG_DIRECTORY": str(tmp_path),
-                "ANALYZE_PIPELINE_OUTPUT": "spoofed or stale report",
+                runtime_variable: "spoofed or stale value",
             },
         )
 
 
 def test_review_pipeline_applies_overrides_to_every_execution(tmp_path: Path) -> None:
-    runner = ParallelReviewRunner()
+    runner = ParallelReviewRunner(tmp_path)
 
     _run_review_pipeline(
         runner,
@@ -513,6 +901,8 @@ def test_review_pipeline_does_not_compare_incomplete_specialist_reports(
             reasoning_effort: str | None = None,
         ) -> dict[str, Any]:
             self.calls.append(prompt_name)
+            if prompt_name == RECONNAISSANCE_PROMPT:
+                return _successful_review(_reconnaissance_output())
             output = "" if prompt_name == "ANALYZE_BOUNDARIES" else "Report"
             return _successful_review(output)
 
@@ -529,17 +919,76 @@ def test_review_pipeline_does_not_compare_incomplete_specialist_reports(
     assert COMPARISON_PROMPT not in runner.calls
 
 
-def test_final_review_is_atomically_replaced_with_complete_markdown(
+def test_reports_are_published_under_project_and_run_directories(
     tmp_path: Path,
 ) -> None:
-    output_path = tmp_path / "final_review.md"
-    output_path.write_text("stale\n", encoding="utf-8")
+    review_directory = tmp_path / "PROJECT NAME"
+    reports_root = tmp_path / "reports"
+    review_directory.mkdir()
+    outputs = {
+        prompt_output_variable_name(prompt_name): f"Report from {prompt_name}"
+        for prompt_name in REPORT_PROMPTS
+    }
 
-    observed_path = _write_final_review("audited review", output_path)
+    publication = _publish_reports(
+        outputs,
+        review_directory=review_directory,
+        reports_root=reports_root,
+        run_id="2026-09-19T12-00-00.12Z",
+    )
 
-    assert observed_path == output_path
-    assert output_path.read_text(encoding="utf-8") == "audited review\n"
-    assert list(tmp_path.iterdir()) == [output_path]
+    assert publication.project_name == "PROJECT_NAME"
+    assert publication.run_id == "2026-09-19T12-00-00.12Z"
+    assert publication.report_directory == (
+        reports_root / "PROJECT_NAME" / publication.run_id
+    )
+    assert set(publication.report_paths) == set(outputs)
+    assert {path.name for path in publication.report_paths.values()} == {
+        f"{output_name}.md" for output_name in outputs
+    }
+    for output_name, report_path in publication.report_paths.items():
+        assert report_path.read_text(encoding="utf-8") == f"{outputs[output_name]}\n"
+    assert [path.name for path in publication.report_directory.parent.iterdir()] == [
+        publication.run_id
+    ]
+
+    with pytest.raises(InitializationError, match="already exists"):
+        _publish_reports(
+            {name: f"replacement {content}" for name, content in outputs.items()},
+            review_directory=review_directory,
+            reports_root=reports_root,
+            run_id=publication.run_id,
+        )
+
+    for output_name, report_path in publication.report_paths.items():
+        assert report_path.read_text(encoding="utf-8") == f"{outputs[output_name]}\n"
+
+
+def test_failed_report_publication_removes_staging_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    review_directory = tmp_path / "PROJECT"
+    reports_root = tmp_path / "reports"
+    review_directory.mkdir()
+    outputs = {
+        prompt_output_variable_name(prompt_name): prompt_name
+        for prompt_name in REPORT_PROMPTS
+    }
+
+    def fail_replace(source: Path, destination: Path) -> None:
+        raise OSError("simulated publication failure")
+
+    monkeypatch.setattr(os, "replace", fail_replace)
+
+    with pytest.raises(InitializationError, match="simulated publication failure"):
+        _publish_reports(
+            outputs,
+            review_directory=review_directory,
+            reports_root=reports_root,
+            run_id="2026-09-19T12-00-01.12Z",
+        )
+
+    assert list((reports_root / "PROJECT").iterdir()) == []
 
 
 def test_machine_readable_result_contract_tracks_the_pipeline() -> None:
@@ -549,6 +998,19 @@ def test_machine_readable_result_contract_tracks_the_pipeline() -> None:
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
 
     assert schema["properties"]["schema"]["const"] == RESULT_SCHEMA
+    assert "final_review_path" not in schema["properties"]
+    assert {
+        "report_project_name",
+        "report_run_id",
+        "report_directory",
+        "report_paths",
+    } <= set(schema["required"])
     specialist_contract = schema["properties"]["specialist_reviews"]
     assert tuple(specialist_contract["required"]) == SPECIALIST_PROMPTS
     assert set(specialist_contract["properties"]) == set(SPECIALIST_PROMPTS)
+    report_paths_contract = schema["properties"]["report_paths"]
+    expected_output_names = {
+        prompt_output_variable_name(prompt_name) for prompt_name in REPORT_PROMPTS
+    }
+    assert set(report_paths_contract["required"]) == expected_output_names
+    assert set(report_paths_contract["properties"]) == expected_output_names

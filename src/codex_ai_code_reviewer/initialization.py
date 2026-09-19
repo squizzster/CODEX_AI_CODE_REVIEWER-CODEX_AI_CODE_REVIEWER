@@ -7,11 +7,14 @@ import json
 import os
 import re
 import subprocess
+import sys
+import tempfile
+import threading
 import unicodedata
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, TextIO
 
 import yaml
 
@@ -25,6 +28,8 @@ RISK_PROFILES = frozenset(
 PROMPT_KEYS = frozenset({"prompt", "model", "reasoning_effort", "risk_profile"})
 ARG_DIRECTORY_VARIABLE = "ARG_DIRECTORY"
 PROMPT_OUTPUT_VARIABLE_SUFFIX = "_OUTPUT"
+
+type LiveEventHandler = Callable[[str, dict[str, Any]], None]
 
 
 class InitializationError(RuntimeError):
@@ -394,12 +399,64 @@ def _runner_subprocess_environment() -> dict[str, str]:
 class PromptRunnerCli:
     """Adapter for the Prompt Runner's versioned JSON command contract."""
 
-    def __init__(self, runner_root: Path) -> None:
+    def __init__(
+        self,
+        runner_root: Path,
+        *,
+        live_event_handler: LiveEventHandler | None = None,
+        live_event_stream: TextIO | None = None,
+    ) -> None:
         self._runner_root = runner_root.resolve()
         if not (self._runner_root / "pyproject.toml").is_file():
             raise InitializationError(
                 f"Prompt Runner project was not found at {self._runner_root}"
             )
+        self._live_event_handler = live_event_handler
+        self._live_event_stream = live_event_stream or sys.stderr
+        self._live_event_write_lock = threading.Lock()
+
+    @staticmethod
+    def _parse_live_event(prompt_name: str, line: str) -> dict[str, Any]:
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise InitializationError(
+                f"Prompt Runner emitted invalid live-event JSON for {prompt_name}"
+            ) from error
+        if not isinstance(event, dict):
+            raise InitializationError(
+                f"Prompt Runner emitted a non-object live event for {prompt_name}"
+            )
+        return event
+
+    def _forward_live_event(self, line: str) -> None:
+        with self._live_event_write_lock:
+            self._live_event_stream.write(line)
+            if not line.endswith("\n"):
+                self._live_event_stream.write("\n")
+            self._live_event_stream.flush()
+
+    def _consume_live_event(self, prompt_name: str, line: str) -> dict[str, Any]:
+        """Run the single parse, handle, and forward pipeline for one event."""
+
+        try:
+            event = self._parse_live_event(prompt_name, line)
+            if self._live_event_handler is not None:
+                self._live_event_handler(prompt_name, event)
+        finally:
+            self._forward_live_event(line)
+        return event
+
+    @staticmethod
+    def _stop_live_process(process: subprocess.Popen[str]) -> None:
+        if process.poll() is not None:
+            return
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
 
     def _invoke(self, *arguments: str) -> _CommandResult:
         command = ["uv", "run", "codex-prompt-runner", *arguments]
@@ -537,7 +594,7 @@ class PromptRunnerCli:
         model: str | None = None,
         reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
-        """Force one live run while forwarding structured progress to stderr."""
+        """Force one live run while consuming and forwarding progress in real time."""
 
         command = [
             "uv",
@@ -554,29 +611,50 @@ class PromptRunnerCli:
         for name, value in sorted(variables.items()):
             command.extend(("--var", f"{name}={value}"))
         command.extend(("--cwd", str(working_directory), "--live", "--detail"))
+        process: subprocess.Popen[str] | None = None
+        isolated_workspace: str | None = None
         try:
-            completed = subprocess.run(
-                command,
-                cwd=self._runner_root,
-                check=False,
-                stdout=subprocess.PIPE,
-                stderr=None,
-                text=True,
-                encoding="utf-8",
-                env=_runner_subprocess_environment(),
-            )
+            with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stdout:
+                process = subprocess.Popen(
+                    command,
+                    cwd=self._runner_root,
+                    stdout=stdout,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding="utf-8",
+                    env=_runner_subprocess_environment(),
+                )
+                assert process.stderr is not None
+                for line in process.stderr:
+                    event = self._consume_live_event(prompt_name, line)
+                    workspace_value = event.get("isolated_workspace")
+                    if isinstance(workspace_value, str) and workspace_value:
+                        isolated_workspace = workspace_value
+                return_code = process.wait()
+                stdout.seek(0)
+                result_stdout = stdout.read()
         except OSError as error:
+            if process is not None:
+                self._stop_live_process(process)
             raise InitializationError(f"Cannot start Prompt Runner: {error}") from error
+        except BaseException:
+            if process is not None:
+                self._stop_live_process(process)
+            raise
         try:
-            payload = json.loads(completed.stdout)
+            payload = json.loads(result_stdout)
         except json.JSONDecodeError as error:
             raise InitializationError(
-                f"Prompt Runner returned invalid run JSON (exit {completed.returncode})"
+                f"Prompt Runner returned invalid run JSON (exit {return_code})"
             ) from error
         if not isinstance(payload, dict):
             raise InitializationError(
                 "Prompt Runner returned a non-object run JSON document"
             )
-        return self._require_success(
-            _CommandResult(completed.returncode, payload, "forwarded to stderr")
+        result = self._require_success(
+            _CommandResult(return_code, payload, "forwarded to stderr")
         )
+        if isolated_workspace is not None:
+            result = dict(result)
+            result["isolated_workspace"] = isolated_workspace
+        return result

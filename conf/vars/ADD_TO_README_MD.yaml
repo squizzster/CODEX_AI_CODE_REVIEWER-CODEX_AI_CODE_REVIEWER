@@ -1,0 +1,8 @@
+|
+
+  If your final output is sometime of report, consider the `./outputs` dir which is write-enabled.
+  Also consider, `./scratch_pad` for any in-turn notes which likely wouldn't go in the output,
+  or `./temp_scripts` if you need to code, you can write and execute if needed there!
+  Your RO source code is also available via the symlink `./source_code_read_only_link`
+  
+  ---

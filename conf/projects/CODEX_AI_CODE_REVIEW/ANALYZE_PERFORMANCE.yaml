@@ -1,4 +1,6 @@
 prompt: |
+  {{VAR:QUESTIONS}}
+
   {{VAR:REVIEW_DIRECTORY_CONTEXT}}
 
   TASK:
