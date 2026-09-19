@@ -70,6 +70,10 @@ remain isolated from the source repository by Prompt Runner.
 - `REVIEW_DIRECTORY_CONTEXT` injects the same target boundary into all active prompts.
 
 The result contract is [docs/contracts/code-review-result.schema.json](docs/contracts/code-review-result.schema.json).
+During ALPHA, JSON consumers should follow the current schema: `specialist_reviews`
+contains the six active specialist reports. Consumers expecting
+`ANALYZE_RECONNAISSANCE` must update for its temporary removal, including the absence
+of `ANALYZE_RECONNAISSANCE_OUTPUT` from the completed run's variable names.
 Machine-readable ownership and workflow records are under `docs/architecture/modules/`
 and `docs/architecture/features/`.
 
