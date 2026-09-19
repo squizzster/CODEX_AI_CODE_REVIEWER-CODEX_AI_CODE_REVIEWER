@@ -233,15 +233,14 @@ def _require_report_output(review: dict[str, Any], prompt: PromptDefinition) -> 
     return output
 
 
-def _select_report_output(
+def _final_output_produced(
     review: dict[str, Any], prompt: PromptDefinition
 ) -> str:
-    """Prefer one workspace Markdown report, falling back to the final message."""
+    """Return one Markdown report or fall back to the agent's final turn."""
 
-    handoff = _require_report_output(review, prompt)
     workspace_value = review.get("isolated_workspace")
     if not isinstance(workspace_value, str) or not workspace_value:
-        return handoff
+        return _require_report_output(review, prompt)
     workspace = Path(workspace_value)
     output_directory = workspace / OUTPUT_DIRECTORY_NAME
     try:
@@ -262,7 +261,7 @@ def _select_report_output(
         ) from error
     if len(markdown_paths) != 1:
         if not markdown_paths:
-            return handoff
+            return _require_report_output(review, prompt)
         raise InitializationError(
             f"Prompt must produce exactly one Markdown file in "
             f"{output_directory}; found {len(markdown_paths)}"
@@ -378,13 +377,13 @@ def _run_review_pipeline(
             try:
                 review = future.result()
                 _require_expected_execution(review, prompt, overrides)
-                selected_report = _select_report_output(review, prompt)
+                final_output_produced = _final_output_produced(review, prompt)
             except InitializationError as error:
                 failures[prompt_name] = f"{type(error).__name__}: {error}"
             else:
                 specialist_reviews[prompt_name] = review
                 prompt_output_variables[prompt_output_variable_name(prompt_name)] = (
-                    selected_report
+                    final_output_produced
                 )
 
     if failures:
@@ -412,7 +411,7 @@ def _run_review_pipeline(
     comparison_prompt = prompts[COMPARISON_PROMPT]
     _require_expected_execution(comparison, comparison_prompt, overrides)
     prompt_output_variables[prompt_output_variable_name(COMPARISON_PROMPT)] = (
-        _select_report_output(comparison, comparison_prompt)
+        _final_output_produced(comparison, comparison_prompt)
     )
     return ReviewPipelineResult(
         ordered_specialist_reviews,

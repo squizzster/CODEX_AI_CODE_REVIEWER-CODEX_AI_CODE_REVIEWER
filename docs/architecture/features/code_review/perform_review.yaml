@@ -19,7 +19,8 @@ outcomes:
   - one reports/<project_name>/<review_started_at_utc>/ directory
   - one <PROMPT_NAME>_OUTPUT.md file for each specialist and the comparison
   - each completed prompt owns one run-local <PROMPT_NAME>_OUTPUT variable
-  - each prompt output variable contains the one Markdown report found in outputs, falling back to the Prompt Runner final message when none exists
+  - each execution derives FINAL_OUTPUT_PRODUCED from its one Markdown report, falling back to the Prompt Runner final turn when none exists
+  - each prompt output variable contains that execution's FINAL_OUTPUT_PRODUCED value
   - each stock-executor workspace is initialized from its first location-bearing live event
 failures:
   - invalid directory, configuration, or variable graph returns exit code 2
@@ -72,9 +73,11 @@ extensions:
       final_report_link: final_md_report -> outputs
       output_contract:
         scan: direct children of outputs
+        ignored_entries: every non-Markdown entry
         markdown_selection: use exactly one; fall back to final message when zero; reject more than one
         file_requirements: nonempty regular file, not a symlink
         prompt_runner_final_message: retained as execution metadata and used as the zero-file fallback
+        final_output_produced: one Markdown file when present, otherwise the nonempty final turn; fail when neither exists
       workspace_readme: resolved specialist instruction or comparison prompt
       cached_result_creates_workspace: false
       custom_executor_without_isolated_workspace: final message supplies the report

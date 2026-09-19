@@ -23,6 +23,7 @@ from codex_ai_code_reviewer.cli import (
     ReviewExecutionOverrides,
     _analysis_prompt_definitions,
     _enter_review_directory,
+    _final_output_produced,
     _parser,
     _publish_reports,
     _require_expected_execution,
@@ -30,7 +31,6 @@ from codex_ai_code_reviewer.cli import (
     _review_directory,
     _review_run_id,
     _run_review_pipeline,
-    _select_report_output,
     _workspace_readmes,
 )
 from codex_ai_code_reviewer.initialization import (
@@ -416,9 +416,23 @@ def test_workspace_report_is_the_authoritative_prompt_output(tmp_path: Path) -> 
     review["isolated_workspace"] = str(workspace)
 
     assert (
-        _select_report_output(review, prompt)
+        _final_output_produced(review, prompt)
         == "Complete pipeline report\n"
     )
+
+
+def test_workspace_report_does_not_require_a_final_turn(tmp_path: Path) -> None:
+    prompt = _prompt_definitions(tmp_path)["ANALYZE_PIPELINE"]
+    workspace = tmp_path / "isolated-workspace"
+    outputs = workspace / "outputs"
+    outputs.mkdir(parents=True)
+    (outputs / "pipeline-review.md").write_text(
+        "Complete file-backed report\n", encoding="utf-8"
+    )
+    review = _successful_review("")
+    review["isolated_workspace"] = str(workspace)
+
+    assert _final_output_produced(review, prompt) == "Complete file-backed report\n"
 
 
 @pytest.mark.parametrize(
@@ -441,7 +455,7 @@ def test_workspace_report_requires_exactly_one_nonempty_markdown_file(
     review["isolated_workspace"] = str(workspace)
 
     with pytest.raises(InitializationError, match=message):
-        _select_report_output(review, prompt)
+        _final_output_produced(review, prompt)
 
 
 def test_workspace_report_falls_back_to_handoff_when_outputs_has_no_markdown(
@@ -455,7 +469,20 @@ def test_workspace_report_falls_back_to_handoff_when_outputs_has_no_markdown(
     review = _successful_review("Complete report returned as the last message")
     review["isolated_workspace"] = str(workspace)
 
-    assert _select_report_output(review, prompt) == review["output"]
+    assert _final_output_produced(review, prompt) == review["output"]
+
+
+def test_final_output_requires_markdown_or_a_final_turn(tmp_path: Path) -> None:
+    prompt = _prompt_definitions(tmp_path)["ANALYZE_PIPELINE"]
+    workspace = tmp_path / "isolated-workspace"
+    outputs = workspace / "outputs"
+    outputs.mkdir(parents=True)
+    (outputs / "probe-results.jsonl").write_text("{}\n", encoding="utf-8")
+    review = _successful_review("")
+    review["isolated_workspace"] = str(workspace)
+
+    with pytest.raises(InitializationError, match="returned no report"):
+        _final_output_produced(review, prompt)
 
 
 def test_report_falls_back_to_handoff_without_an_isolated_workspace(
@@ -464,7 +491,7 @@ def test_report_falls_back_to_handoff_without_an_isolated_workspace(
     prompt = _prompt_definitions(tmp_path)["ANALYZE_PIPELINE"]
     review = _successful_review("Custom executor report")
 
-    assert _select_report_output(review, prompt) == "Custom executor report"
+    assert _final_output_produced(review, prompt) == "Custom executor report"
 
 
 def test_workspace_report_rejects_a_markdown_symlink(tmp_path: Path) -> None:
@@ -479,7 +506,7 @@ def test_workspace_report_rejects_a_markdown_symlink(tmp_path: Path) -> None:
     review["isolated_workspace"] = str(workspace)
 
     with pytest.raises(InitializationError, match="regular file"):
-        _select_report_output(review, prompt)
+        _final_output_produced(review, prompt)
 
 
 @pytest.mark.parametrize("missing_prompt", ANALYSIS_PROMPTS)
