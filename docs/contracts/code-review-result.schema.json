@@ -69,12 +69,20 @@
       "required": [
         "ANALYZE_PIPELINE",
         "ANALYZE_BOUNDARIES",
-        "ANALYZE_NETWORKING"
+        "ANALYZE_NETWORKING",
+        "ANALYZE_INTEGRITY",
+        "ANALYZE_SECURITY",
+        "ANALYZE_PERFORMANCE",
+        "ANALYZE_RECONNAISSANCE"
       ],
       "properties": {
         "ANALYZE_PIPELINE": { "$ref": "#/$defs/review" },
         "ANALYZE_BOUNDARIES": { "$ref": "#/$defs/review" },
-        "ANALYZE_NETWORKING": { "$ref": "#/$defs/review" }
+        "ANALYZE_NETWORKING": { "$ref": "#/$defs/review" },
+        "ANALYZE_INTEGRITY": { "$ref": "#/$defs/review" },
+        "ANALYZE_SECURITY": { "$ref": "#/$defs/review" },
+        "ANALYZE_PERFORMANCE": { "$ref": "#/$defs/review" },
+        "ANALYZE_RECONNAISSANCE": { "$ref": "#/$defs/review" }
       }
     },
     "review": {

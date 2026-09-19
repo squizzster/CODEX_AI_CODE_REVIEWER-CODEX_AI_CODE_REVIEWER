@@ -31,8 +31,9 @@ without changing the defaults stored in prompt YAML or the Prompt Runner catalog
 ## Pipeline
 
 1. Validate repository-owned YAML and synchronize the Prompt Runner catalogue.
-2. Run `ANALYZE_PIPELINE`, `ANALYZE_BOUNDARIES`, and `ANALYZE_NETWORKING` in
-   parallel.
+2. Run `ANALYZE_PIPELINE`, `ANALYZE_BOUNDARIES`, `ANALYZE_NETWORKING`,
+   `ANALYZE_INTEGRITY`, `ANALYZE_SECURITY`, `ANALYZE_PERFORMANCE`, and
+   `ANALYZE_RECONNAISSANCE` in parallel.
 3. Publish each successful result internally as `{{VAR:<PROMPT_NAME>_OUTPUT}}`.
 4. Run `COMPARE_AGENT_REPORTS` only after all specialist reports succeed, with each
    report bound by prompt identity rather than completion order.
@@ -43,7 +44,8 @@ Progress from Prompt Runner is forwarded to stderr. Expected input, configuratio
 catalogue, and execution failures return exit code `2`; no comparison or final report
 is published from an incomplete specialist stage.
 
-`ANALYZE_PIPELINE` and `ANALYZE_BOUNDARIES` use `BALANCED` execution.
+`ANALYZE_PIPELINE`, `ANALYZE_BOUNDARIES`, `ANALYZE_INTEGRITY`, `ANALYZE_SECURITY`,
+`ANALYZE_PERFORMANCE`, and `ANALYZE_RECONNAISSANCE` use `BALANCED` execution.
 `ANALYZE_NETWORKING` and `COMPARE_AGENT_REPORTS` use `NETWORKED_WORKSPACE` so their
 shell checks can reach network resources when justified. All tool-enabled executions
 remain isolated from the source repository by Prompt Runner.
@@ -54,6 +56,8 @@ remain isolated from the source repository by Prompt Runner.
 - Invocation-level `--model` and `--reasoning` values override only their corresponding
   YAML defaults; risk profiles continue to come from YAML.
 - `conf/vars/<VARIABLE>.yaml` owns reusable string values.
+- Reconnaissance uses its self-contained survey instructions without `ANALYZE_HEADER`;
+  the six deep specialists use the shared defect-analysis instructions.
 - Repository variables may reference `{{VAR:NAME}}`; missing references and cycles
   fail before execution.
 - `ARG_DIRECTORY` and every `<PROMPT_NAME>_OUTPUT` are reserved runtime values.
@@ -61,7 +65,7 @@ remain isolated from the source repository by Prompt Runner.
 - A prompt output becomes available only after that prompt succeeds. Specialist
   outputs remain opaque and are supplied to the comparison by stable prompt name,
   independent of parallel completion order.
-- `REVIEW_DIRECTORY_CONTEXT` injects the same target boundary into all four prompts.
+- `REVIEW_DIRECTORY_CONTEXT` injects the same target boundary into all eight prompts.
 
 The result contract is [docs/contracts/code-review-result.schema.json](docs/contracts/code-review-result.schema.json).
 Machine-readable ownership and workflow records are under `docs/architecture/modules/`
