@@ -1,0 +1,7 @@
+prompt: |
+  {{VAR:REVIEW_DIRECTORY_CONTEXT}}
+
+  {{VAR:RECONNAISSANCE_SPECIALIST}}
+model: gpt-6-astra
+reasoning_effort: xhigh
+risk_profile: BALANCED

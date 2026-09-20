@@ -15,16 +15,21 @@ from codex_ai_code_reviewer.cli import (
     ANALYSIS_PROMPTS,
     COMPARISON_PROMPT,
     CONFIG_ROOT,
+    DEFAULT_PROMPT_VERSION,
+    PROMPT_PROJECT_BY_VERSION,
     QUESTIONS_VARIABLE,
     RECONNAISSANCE_PROMPT,
     REPORT_PROMPTS,
     RESULT_SCHEMA,
     SPECIALIST_PROMPTS,
     SPECIALIST_VARIABLE_BY_PROMPT,
+    V2_ANALYSIS_PROJECT,
     VARIABLES_ROOT,
     WORKSPACE_README_APPEND_VARIABLE,
     ReviewExecutionOverrides,
     _analysis_prompt_definitions,
+    _analysis_variable_definitions,
+    _doctor_analysis_configuration,
     _enter_review_directory,
     _extract_specialist_question_blocks,
     _final_output_produced,
@@ -49,10 +54,12 @@ from codex_ai_code_reviewer.initialization import (
 )
 
 
-def _prompt_definitions(tmp_path: Path) -> dict[str, PromptDefinition]:
+def _prompt_definitions(
+    tmp_path: Path, project_name: str = ANALYSIS_PROJECT
+) -> dict[str, PromptDefinition]:
     return {
         prompt_name: PromptDefinition(
-            project_name=ANALYSIS_PROJECT,
+            project_name=project_name,
             prompt_name=prompt_name,
             source_path=tmp_path / f"{prompt_name}.yaml",
             template=(
@@ -91,8 +98,11 @@ def _successful_review(
 
 
 class ParallelReviewRunner:
-    def __init__(self, workspace_root: Path) -> None:
+    def __init__(
+        self, workspace_root: Path, project_name: str = ANALYSIS_PROJECT
+    ) -> None:
         self._workspace_root = workspace_root
+        self._project_name = project_name
         self._specialist_start = Barrier(len(SPECIALIST_PROMPTS))
         self._lock = Lock()
         self._completion_order = tuple(reversed(SPECIALIST_PROMPTS))
@@ -115,7 +125,7 @@ class ParallelReviewRunner:
         model: str | None = None,
         reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
-        assert project_name == ANALYSIS_PROJECT
+        assert project_name == self._project_name
         assert working_directory.is_dir()
         with self._lock:
             self.calls.append(prompt_name)
@@ -178,6 +188,15 @@ class ParallelReviewRunner:
     [
         ["--model", "gpt-5.6-luna", "--reasoning", "max", "/project"],
         ["/project", "--model", "gpt-5.6-luna", "--reasoning", "max"],
+        [
+            "/project",
+            "--prompt-version",
+            "v2",
+            "--model",
+            "gpt-5.6-luna",
+            "--reasoning",
+            "max",
+        ],
     ],
 )
 def test_parser_accepts_execution_overrides_before_or_after_directory(
@@ -188,6 +207,9 @@ def test_parser_accepts_execution_overrides_before_or_after_directory(
     assert arguments.directory == Path("/project")
     assert arguments.model == "gpt-5.6-luna"
     assert arguments.reasoning_effort == "max"
+    assert arguments.prompt_version == (
+        "v2" if "v2" in argv else DEFAULT_PROMPT_VERSION
+    )
     assert arguments.reports_directory.name == "reports"
 
 
@@ -314,7 +336,14 @@ def test_shell_launcher_forwards_overrides_in_either_position(
         "LAUNCHER_OBSERVATION": str(observation),
         "PATH": f"{fake_bin}:{os.environ['PATH']}",
     }
-    options = ["--model", "gpt-5.6-luna", "--reasoning", "max"]
+    options = [
+        "--prompt-version",
+        "v2",
+        "--model",
+        "gpt-5.6-luna",
+        "--reasoning",
+        "max",
+    ]
     arguments = (
         [*options, str(review_directory)]
         if options_first
@@ -604,11 +633,14 @@ def test_analysis_configuration_requires_every_pipeline_prompt(
         _analysis_prompt_definitions((project,))
 
 
+@pytest.mark.parametrize("project_name", PROMPT_PROJECT_BY_VERSION.values())
 def test_repository_prompts_share_one_resolved_directory_context(
-    tmp_path: Path,
+    tmp_path: Path, project_name: str
 ) -> None:
-    prompts = _analysis_prompt_definitions(load_project_definitions(CONFIG_ROOT))
-    configured_variables = load_variable_definitions(VARIABLES_ROOT)
+    prompts = _analysis_prompt_definitions(
+        load_project_definitions(CONFIG_ROOT), project_name
+    )
+    configured_variables = _analysis_variable_definitions(project_name)
 
     for prompt in prompts.values():
         assert prompt.template.count("{{VAR:REVIEW_DIRECTORY_CONTEXT}}") == 1
@@ -625,8 +657,13 @@ def test_repository_prompts_share_one_resolved_directory_context(
     assert "{{VAR:" not in context
 
 
-def test_repository_prompts_apply_the_intended_execution_profiles() -> None:
-    prompts = _analysis_prompt_definitions(load_project_definitions(CONFIG_ROOT))
+@pytest.mark.parametrize("project_name", PROMPT_PROJECT_BY_VERSION.values())
+def test_repository_prompts_apply_the_intended_execution_profiles(
+    project_name: str,
+) -> None:
+    prompts = _analysis_prompt_definitions(
+        load_project_definitions(CONFIG_ROOT), project_name
+    )
 
     assert {
         prompt_name: prompt.risk_profile for prompt_name, prompt in prompts.items()
@@ -655,8 +692,13 @@ def test_repository_prompts_apply_the_intended_execution_profiles() -> None:
     }
 
 
-def test_repository_specialists_use_their_named_lens_variables() -> None:
-    prompts = _analysis_prompt_definitions(load_project_definitions(CONFIG_ROOT))
+@pytest.mark.parametrize("project_name", PROMPT_PROJECT_BY_VERSION.values())
+def test_repository_specialists_use_their_named_lens_variables(
+    project_name: str,
+) -> None:
+    prompts = _analysis_prompt_definitions(
+        load_project_definitions(CONFIG_ROOT), project_name
+    )
 
     for prompt_name, lens_variable in SPECIALIST_VARIABLE_BY_PROMPT.items():
         expected_variables = {
@@ -670,11 +712,12 @@ def test_repository_specialists_use_their_named_lens_variables() -> None:
         )
 
 
+@pytest.mark.parametrize("project_name", PROMPT_PROJECT_BY_VERSION.values())
 def test_reconnaissance_instructions_define_every_specialist_block(
-    tmp_path: Path,
+    tmp_path: Path, project_name: str
 ) -> None:
     variables = compose_variable_values(
-        load_variable_definitions(VARIABLES_ROOT), tmp_path
+        _analysis_variable_definitions(project_name), tmp_path
     )
     instructions = variables["RECONNAISSANCE_SPECIALIST"]
 
@@ -683,12 +726,15 @@ def test_reconnaissance_instructions_define_every_specialist_block(
         assert f"</{prompt_name}>" in instructions
 
 
+@pytest.mark.parametrize("project_name", PROMPT_PROJECT_BY_VERSION.values())
 def test_workspace_readmes_use_specialist_context_and_comparison_prompt(
-    tmp_path: Path,
+    tmp_path: Path, project_name: str
 ) -> None:
-    prompts = _analysis_prompt_definitions(load_project_definitions(CONFIG_ROOT))
+    prompts = _analysis_prompt_definitions(
+        load_project_definitions(CONFIG_ROOT), project_name
+    )
     variables = compose_variable_values(
-        load_variable_definitions(VARIABLES_ROOT), tmp_path
+        _analysis_variable_definitions(project_name), tmp_path
     )
 
     readmes = _workspace_readmes(prompts, variables)
@@ -705,6 +751,69 @@ def test_workspace_readmes_use_specialist_context_and_comparison_prompt(
     assert readmes[COMPARISON_PROMPT] == (
         f"{prompts[COMPARISON_PROMPT].template.rstrip()}\n\n{appendix}"
     )
+
+
+def test_original_and_v2_prompt_projects_are_identical_on_disk() -> None:
+    original_root = CONFIG_ROOT / ANALYSIS_PROJECT
+    v2_root = CONFIG_ROOT / V2_ANALYSIS_PROJECT
+    prompt_names = {path.name for path in original_root.glob("*.yaml")}
+
+    assert prompt_names == {path.name for path in v2_root.glob("*.yaml")}
+    for prompt_name in prompt_names:
+        assert (original_root / prompt_name).read_bytes() == (
+            v2_root / prompt_name
+        ).read_bytes()
+
+
+def test_specialist_variables_are_owned_by_their_prompt_project() -> None:
+    shared_names = {
+        definition.variable_name
+        for definition in load_variable_definitions(VARIABLES_ROOT)
+    }
+    original_variables = {
+        definition.variable_name: definition.value
+        for definition in load_variable_definitions(
+            CONFIG_ROOT / ANALYSIS_PROJECT / "vars"
+        )
+    }
+    v2_variables = {
+        definition.variable_name: definition.value
+        for definition in load_variable_definitions(
+            CONFIG_ROOT / V2_ANALYSIS_PROJECT / "vars"
+        )
+    }
+
+    assert set(original_variables) == set(SPECIALIST_VARIABLE_BY_PROMPT.values())
+    assert set(v2_variables) == set(original_variables)
+    assert shared_names.isdisjoint(original_variables)
+    assert not any(name.endswith("_V2") for name in shared_names)
+    assert all(
+        original_variables[name] != v2_variables[name] for name in original_variables
+    )
+
+
+def test_configuration_doctor_validates_every_prompt_version(tmp_path: Path) -> None:
+    projects = load_project_definitions(CONFIG_ROOT)
+    reserved_runtime_variables = {
+        QUESTIONS_VARIABLE,
+        *(
+            prompt_output_variable_name(prompt.prompt_name)
+            for project in projects
+            for prompt in project.prompts
+        ),
+    }
+
+    configurations = _doctor_analysis_configuration(
+        projects,
+        tmp_path,
+        reserved_runtime_variables=reserved_runtime_variables,
+    )
+
+    assert set(configurations) == set(PROMPT_PROJECT_BY_VERSION)
+    for prompt_version, project_name in PROMPT_PROJECT_BY_VERSION.items():
+        prompts, variables = configurations[prompt_version]
+        assert all(prompt.project_name == project_name for prompt in prompts.values())
+        assert set(SPECIALIST_VARIABLE_BY_PROMPT.values()) <= set(variables)
 
 
 def test_workspace_readmes_require_shared_appendix(tmp_path: Path) -> None:
@@ -765,6 +874,24 @@ def test_review_pipeline_runs_specialists_in_parallel_then_compares_reports(
         },
         "COMPARE_AGENT_REPORTS_OUTPUT": "Integrated detailed review",
     }
+
+
+def test_review_pipeline_runs_the_selected_v2_prompt_project(tmp_path: Path) -> None:
+    runner = ParallelReviewRunner(tmp_path, V2_ANALYSIS_PROJECT)
+
+    result = _run_review_pipeline(
+        runner,
+        _prompt_definitions(tmp_path, V2_ANALYSIS_PROJECT),
+        variables={"ARG_DIRECTORY": str(tmp_path)},
+        working_directory=tmp_path,
+        project_name=V2_ANALYSIS_PROJECT,
+    )
+
+    assert tuple(result.specialist_reviews) == SPECIALIST_PROMPTS
+    assert runner.calls[0] == RECONNAISSANCE_PROMPT
+    assert len(runner.calls[1:-1]) == len(SPECIALIST_PROMPTS)
+    assert set(runner.calls[1:-1]) == set(SPECIALIST_PROMPTS)
+    assert runner.calls[-1] == COMPARISON_PROMPT
 
 
 def test_pipeline_rejects_a_misspelled_or_unavailable_output_reference(
@@ -1000,11 +1127,18 @@ def test_machine_readable_result_contract_tracks_the_pipeline() -> None:
     assert schema["properties"]["schema"]["const"] == RESULT_SCHEMA
     assert "final_review_path" not in schema["properties"]
     assert {
+        "prompt_version",
+        "prompt_project",
         "report_project_name",
         "report_run_id",
         "report_directory",
         "report_paths",
+        "prompt_runner_policy",
     } <= set(schema["required"])
+    assert schema["properties"]["prompt_version"]["enum"] == ["original", "v2"]
+    assert set(schema["properties"]["prompt_project"]["enum"]) == set(
+        PROMPT_PROJECT_BY_VERSION.values()
+    )
     specialist_contract = schema["properties"]["specialist_reviews"]
     assert tuple(specialist_contract["required"]) == SPECIALIST_PROMPTS
     assert set(specialist_contract["properties"]) == set(SPECIALIST_PROMPTS)
@@ -1014,3 +1148,9 @@ def test_machine_readable_result_contract_tracks_the_pipeline() -> None:
     }
     assert set(report_paths_contract["required"]) == expected_output_names
     assert set(report_paths_contract["properties"]) == expected_output_names
+    policy = schema["properties"]["prompt_runner_policy"]
+    assert policy["properties"]["attempt_timeout_seconds"]["const"] == 5400.0
+    assert [
+        item["const"]
+        for item in policy["properties"]["retry_delays_seconds"]["prefixItems"]
+    ] == [120, 300]

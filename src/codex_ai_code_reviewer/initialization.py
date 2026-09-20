@@ -4,19 +4,24 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
-import subprocess
+import secrets
 import sys
-import tempfile
 import threading
 import unicodedata
 from collections.abc import Callable, Collection
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, Protocol, TextIO
 
 import yaml
+from codex_prompt_runner_system import (
+    ModelExecutor,
+    PromptRunner,
+    PromptRunnerError,
+    RunOutcome,
+)
 
 PROJECT_NAME_PATTERN = re.compile(r"[A-Z0-9_-]+")
 VARIABLE_NAME_PATTERN = re.compile(r"[A-Z][A-Z0-9_]*")
@@ -28,6 +33,9 @@ RISK_PROFILES = frozenset(
 PROMPT_KEYS = frozenset({"prompt", "model", "reasoning_effort", "risk_profile"})
 ARG_DIRECTORY_VARIABLE = "ARG_DIRECTORY"
 PROMPT_OUTPUT_VARIABLE_SUFFIX = "_OUTPUT"
+PROMPT_RUNNER_ATTEMPT_TIMEOUT_SECONDS = 5400.0
+PROMPT_RUNNER_RETRY_DELAYS_SECONDS = (120, 300)
+LIVE_EVENT_SCHEMA = "codex-prompt-runner.live-event/v1"
 
 type LiveEventHandler = Callable[[str, dict[str, Any]], None]
 
@@ -195,7 +203,7 @@ def load_project_definitions(config_root: Path) -> tuple[ProjectDefinition, ...]
         )
 
     projects: list[ProjectDefinition] = []
-    prompt_owners: dict[str, Path] = {}
+    prompt_owners: dict[str, PromptDefinition] = {}
     project_paths = sorted(path for path in config_root.iterdir() if path.is_dir())
     if not project_paths:
         raise InitializationError(f"No project directories found in {config_root}")
@@ -213,12 +221,26 @@ def load_project_definitions(config_root: Path) -> tuple[ProjectDefinition, ...]
         )
         for prompt in prompts:
             previous_owner = prompt_owners.setdefault(
-                prompt.prompt_name, prompt.source_path
+                prompt.prompt_name, prompt
             )
-            if previous_owner != prompt.source_path:
+            previous_contract = (
+                previous_owner.template,
+                previous_owner.model,
+                previous_owner.reasoning_effort,
+                previous_owner.risk_profile,
+            )
+            current_contract = (
+                prompt.template,
+                prompt.model,
+                prompt.reasoning_effort,
+                prompt.risk_profile,
+            )
+            if previous_contract != current_contract:
                 raise InitializationError(
-                    f"{prompt.source_path}: prompt name {prompt.prompt_name!r} is already owned by "
-                    f"{previous_owner}"
+                    f"{prompt.source_path}: globally named prompt "
+                    f"{prompt.prompt_name!r} conflicts with "
+                    f"{previous_owner.source_path}; shared prompt definitions must "
+                    "have identical text and execution defaults"
                 )
         projects.append(ProjectDefinition(project_name, prompts))
 
@@ -383,206 +405,209 @@ def _require_synchronized_prompt(
         )
 
 
-@dataclass(frozen=True, slots=True)
-class _CommandResult:
-    exit_code: int
-    payload: dict[str, Any]
-    stderr: str
-
-
-def _runner_subprocess_environment() -> dict[str, str]:
-    environment = os.environ.copy()
-    environment.pop("VIRTUAL_ENV", None)
-    return environment
-
-
-class PromptRunnerCli:
-    """Adapter for the Prompt Runner's versioned JSON command contract."""
+class _ReviewerProgressSink:
+    """Project typed Prompt Runner progress onto the existing live JSONL contract."""
 
     def __init__(
         self,
-        runner_root: Path,
+        prompt_name: str,
         *,
         live_event_handler: LiveEventHandler | None = None,
         live_event_stream: TextIO | None = None,
+        stream_write_lock: threading.Lock,
     ) -> None:
-        self._runner_root = runner_root.resolve()
-        if not (self._runner_root / "pyproject.toml").is_file():
-            raise InitializationError(
-                f"Prompt Runner project was not found at {self._runner_root}"
+        self._prompt_name = prompt_name
+        self._live_event_handler = live_event_handler
+        self._live_event_stream = live_event_stream or sys.stderr
+        self._stream_write_lock = stream_write_lock
+        self._event_lock = threading.Lock()
+        self._invocation_id = secrets.token_hex(16)
+        self._event_sequence = 0
+        self.isolated_workspace: str | None = None
+        self.failure: Exception | None = None
+
+    def emit(self, event: str, **fields: Any) -> None:
+        """Handle and forward one event atomically with a stable invocation identity."""
+
+        with self._event_lock:
+            self._event_sequence += 1
+            payload = {
+                "schema": LIVE_EVENT_SCHEMA,
+                "event": event,
+                "invocation_id": self._invocation_id,
+                "event_sequence": self._event_sequence,
+                "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                **{key: value for key, value in fields.items() if value is not None},
+            }
+            workspace_value = payload.get("isolated_workspace")
+            if isinstance(workspace_value, str) and workspace_value:
+                self.isolated_workspace = workspace_value
+            handler_failure: Exception | None = None
+            if self._live_event_handler is not None:
+                try:
+                    self._live_event_handler(self._prompt_name, payload)
+                except Exception as error:  # noqa: BLE001 - surfaced after execution
+                    self.failure = error
+                    handler_failure = error
+            line = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        with self._stream_write_lock:
+            self._live_event_stream.write(f"{line}\n")
+            self._live_event_stream.flush()
+        if handler_failure is not None:
+            raise handler_failure
+
+
+def _runner_failure(error: PromptRunnerError) -> InitializationError:
+    details = f"; context={error.context!r}" if error.context else ""
+    return InitializationError(
+        f"Prompt Runner failed [{error.code}]: {error.message}{details}"
+    )
+
+
+def _require_live_event_success(
+    sink: _ReviewerProgressSink, prompt_name: str
+) -> None:
+    if sink.failure is not None:
+        raise InitializationError(
+            f"Prompt Runner live-event handling failed for {prompt_name}: "
+            f"{sink.failure}"
+        ) from sink.failure
+
+
+def _run_outcome_record(outcome: RunOutcome) -> dict[str, Any]:
+    """Preserve the Reviewer's stable dictionary contract from a typed outcome."""
+
+    build = outcome.build
+    template = build.materialized.template
+    unique = build.unique_prompt
+    record: dict[str, Any] = {
+        "delivery_mode": outcome.delivery_mode,
+        "request_id": outcome.request_id,
+        "project": template.project_name,
+        "prompt": template.prompt_name,
+        "prompt_name_origin": template.prompt_name_origin,
+        "template_version": template.version,
+        "template_sha256": template.sha256,
+        "template_byte_length": template.byte_length,
+        "template_is_current": template.current,
+        "unique_built_prompt_id": unique.public_id,
+        "built_prompt_sha256": unique.built_prompt_sha256,
+        "model": unique.model,
+        "reasoning_effort": unique.reasoning_effort,
+        "risk_profile": build.risk_profile,
+        "execution_policy_sha256": unique.execution_policy_sha256,
+        "codex_permissions": unique.codex_permissions.as_dict(),
+        "result_id": outcome.result.public_id,
+        "result_version": outcome.result.version,
+        "result_sha256": outcome.result.sha256,
+        "result_byte_length": len(outcome.result.content),
+        "live_occurrence_count": outcome.result.live_occurrence_count,
+        "output": outcome.result.content.decode("utf-8"),
+        "available_result_variants": outcome.available_result_variants,
+        "attempts": outcome.attempts,
+        "client_reasoning": list(outcome.client_reasoning),
+        "model_source": build.model_source,
+        "reasoning_effort_source": build.reasoning_effort_source,
+        "risk_profile_source": build.risk_profile_source,
+        "provenance": outcome.provenance,
+    }
+    if outcome.run_id is not None:
+        record["execution_run_id"] = outcome.run_id
+    if outcome.progress_delivery.get("degraded"):
+        record["progress_delivery"] = outcome.progress_delivery
+    return record
+
+
+class PromptRunnerLibrary:
+    """Typed in-process adapter over Prompt Runner's public Python facade."""
+
+    def __init__(
+        self,
+        state_root: Path | None = None,
+        *,
+        executor: ModelExecutor | None = None,
+        retry_delays_seconds: tuple[int, ...] = PROMPT_RUNNER_RETRY_DELAYS_SECONDS,
+        attempt_timeout_seconds: float = PROMPT_RUNNER_ATTEMPT_TIMEOUT_SECONDS,
+        live_event_handler: LiveEventHandler | None = None,
+        live_event_stream: TextIO | None = None,
+    ) -> None:
+        try:
+            self._runner = PromptRunner(
+                state_root=state_root,
+                executor=executor,
+                retry_delays_seconds=retry_delays_seconds,
+                attempt_timeout_seconds=attempt_timeout_seconds,
             )
+        except (PromptRunnerError, TypeError, ValueError) as error:
+            if isinstance(error, PromptRunnerError):
+                raise _runner_failure(error) from error
+            raise InitializationError(f"Invalid Prompt Runner policy: {error}") from error
         self._live_event_handler = live_event_handler
         self._live_event_stream = live_event_stream or sys.stderr
         self._live_event_write_lock = threading.Lock()
-
-    @staticmethod
-    def _parse_live_event(prompt_name: str, line: str) -> dict[str, Any]:
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError as error:
-            raise InitializationError(
-                f"Prompt Runner emitted invalid live-event JSON for {prompt_name}"
-            ) from error
-        if not isinstance(event, dict):
-            raise InitializationError(
-                f"Prompt Runner emitted a non-object live event for {prompt_name}"
-            )
-        return event
-
-    def _forward_live_event(self, line: str) -> None:
-        with self._live_event_write_lock:
-            self._live_event_stream.write(line)
-            if not line.endswith("\n"):
-                self._live_event_stream.write("\n")
-            self._live_event_stream.flush()
-
-    def _consume_live_event(self, prompt_name: str, line: str) -> dict[str, Any]:
-        """Run the single parse, handle, and forward pipeline for one event."""
-
-        try:
-            event = self._parse_live_event(prompt_name, line)
-            if self._live_event_handler is not None:
-                self._live_event_handler(prompt_name, event)
-        finally:
-            self._forward_live_event(line)
-        return event
-
-    @staticmethod
-    def _stop_live_process(process: subprocess.Popen[str]) -> None:
-        if process.poll() is not None:
-            return
-        process.terminate()
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
-
-    def _invoke(self, *arguments: str) -> _CommandResult:
-        command = ["uv", "run", "codex-prompt-runner", *arguments]
-        try:
-            completed = subprocess.run(
-                command,
-                cwd=self._runner_root,
-                check=False,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                env=_runner_subprocess_environment(),
-            )
-        except OSError as error:
-            raise InitializationError(f"Cannot start Prompt Runner: {error}") from error
-        try:
-            payload = json.loads(completed.stdout)
-        except json.JSONDecodeError as error:
-            raise InitializationError(
-                "Prompt Runner returned invalid JSON "
-                f"(exit {completed.returncode}): {completed.stderr.strip()}"
-            ) from error
-        if not isinstance(payload, dict):
-            raise InitializationError(
-                "Prompt Runner returned a non-object JSON document"
-            )
-        return _CommandResult(completed.returncode, payload, completed.stderr)
-
-    @staticmethod
-    def _require_success(result: _CommandResult) -> dict[str, Any]:
-        if result.exit_code == 0 and result.payload.get("ok") is True:
-            data = result.payload.get("data")
-            if isinstance(data, dict):
-                return data
-            raise InitializationError("Prompt Runner success response has invalid data")
-        errors = result.payload.get("errors")
-        raise InitializationError(
-            f"Prompt Runner command failed (exit {result.exit_code}): {errors!r}; "
-            f"stderr={result.stderr.strip()!r}"
-        )
+        self._requires_isolated_workspace = executor is None
 
     def list_projects(self) -> tuple[str, ...]:
-        data = self._require_success(self._invoke("project", "list"))
-        projects = data.get("projects")
-        if not isinstance(projects, list) or not all(
-            isinstance(project, str) for project in projects
-        ):
-            raise InitializationError("Prompt Runner project list has an invalid shape")
-        return tuple(projects)
+        try:
+            return self._runner.list_projects()
+        except PromptRunnerError as error:
+            raise _runner_failure(error) from error
 
     def register_project(self, project_name: str) -> None:
-        self._require_success(self._invoke("project", "register", project_name))
+        try:
+            self._runner.register_project(project_name)
+        except PromptRunnerError as error:
+            raise _runner_failure(error) from error
 
     def prompt_status(self, prompt: PromptDefinition) -> PromptStatus:
-        result = self._invoke("prompt", "list", prompt.project_name, prompt.prompt_name)
-        if result.exit_code == 0 and result.payload.get("ok") is True:
-            data = self._require_success(result)
-            defaults = data.get("defaults")
-            versions = data.get("versions")
-            if not isinstance(defaults, dict) or not isinstance(versions, list):
-                raise InitializationError(
-                    "Prompt Runner prompt state has an invalid shape"
-                )
-            current_versions = [
-                version
-                for version in versions
-                if isinstance(version, dict) and version.get("current") is True
-            ]
-            if len(current_versions) != 1:
-                raise InitializationError(
-                    "Prompt Runner prompt state must contain one current version"
-                )
-            expected_sha256 = hashlib.sha256(
-                prompt.template.encode("utf-8")
-            ).hexdigest()
-            current = current_versions[0]
-            matches = (
-                current.get("sha256") == expected_sha256
-                and defaults.get("model") == prompt.model
-                and defaults.get("reasoning_effort") == prompt.reasoning_effort
-                and defaults.get("risk_profile") == prompt.risk_profile
+        try:
+            defaults = self._runner.get_prompt_defaults(
+                prompt.project_name, prompt.prompt_name
             )
-            return "current" if matches else "drifted"
-        errors = result.payload.get("errors")
-        if isinstance(errors, list) and any(
-            isinstance(error, dict) and error.get("code") == "prompt_not_found"
-            for error in errors
-        ):
-            return "missing"
-        self._require_success(result)
-        raise AssertionError("unreachable")
+            versions = self._runner.list_template_versions(
+                prompt.project_name, prompt.prompt_name
+            )
+        except PromptRunnerError as error:
+            if error.code in {"prompt_not_found", "prompt_not_in_project"}:
+                return "missing"
+            raise _runner_failure(error) from error
+        current_versions = [version for version in versions if version.current]
+        if len(current_versions) != 1:
+            raise InitializationError(
+                "Prompt Runner prompt state must contain one current version"
+            )
+        current = current_versions[0]
+        expected_sha256 = hashlib.sha256(prompt.template.encode("utf-8")).hexdigest()
+        matches = (
+            current.sha256 == expected_sha256
+            and defaults.model == prompt.model
+            and defaults.reasoning_effort == prompt.reasoning_effort
+            and defaults.risk_profile == prompt.risk_profile
+        )
+        return "current" if matches else "drifted"
 
     def synchronize_prompt(self, prompt: PromptDefinition) -> None:
         """Publish desired bytes/current version, then explicitly update defaults."""
 
-        self._require_success(
-            self._invoke(
-                "prompt",
-                "register",
+        try:
+            self._runner.register_prompt(
+                prompt.project_name,
+                prompt.template.encode("utf-8"),
+                name=prompt.prompt_name,
+                default_model=prompt.model,
+                default_reasoning_effort=prompt.reasoning_effort,
+                default_risk_profile=prompt.risk_profile,
+                make_current=True,
+            )
+            self._runner.set_prompt_defaults(
                 prompt.project_name,
                 prompt.prompt_name,
-                "--template",
-                prompt.template,
-                "--model",
-                prompt.model,
-                "--reasoning",
-                prompt.reasoning_effort,
-                "--risk-profile",
-                prompt.risk_profile,
-                "--make-current",
+                model=prompt.model,
+                reasoning_effort=prompt.reasoning_effort,
+                risk_profile=prompt.risk_profile,
             )
-        )
-        self._require_success(
-            self._invoke(
-                "prompt",
-                "set-defaults",
-                prompt.project_name,
-                prompt.prompt_name,
-                "--model",
-                prompt.model,
-                "--reasoning",
-                prompt.reasoning_effort,
-                "--risk-profile",
-                prompt.risk_profile,
-            )
-        )
+        except PromptRunnerError as error:
+            raise _runner_failure(error) from error
 
     def run_prompt(
         self,
@@ -596,65 +621,34 @@ class PromptRunnerCli:
     ) -> dict[str, Any]:
         """Force one live run while consuming and forwarding progress in real time."""
 
-        command = [
-            "uv",
-            "run",
-            "codex-prompt-runner",
-            "run",
-            project_name,
+        sink = _ReviewerProgressSink(
             prompt_name,
-        ]
-        if model is not None:
-            command.extend(("--model", model))
-        if reasoning_effort is not None:
-            command.extend(("--reasoning", reasoning_effort))
-        for name, value in sorted(variables.items()):
-            command.extend(("--var", f"{name}={value}"))
-        command.extend(("--cwd", str(working_directory), "--live", "--detail"))
-        process: subprocess.Popen[str] | None = None
-        isolated_workspace: str | None = None
-        try:
-            with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stdout:
-                process = subprocess.Popen(
-                    command,
-                    cwd=self._runner_root,
-                    stdout=stdout,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    encoding="utf-8",
-                    env=_runner_subprocess_environment(),
-                )
-                assert process.stderr is not None
-                for line in process.stderr:
-                    event = self._consume_live_event(prompt_name, line)
-                    workspace_value = event.get("isolated_workspace")
-                    if isinstance(workspace_value, str) and workspace_value:
-                        isolated_workspace = workspace_value
-                return_code = process.wait()
-                stdout.seek(0)
-                result_stdout = stdout.read()
-        except OSError as error:
-            if process is not None:
-                self._stop_live_process(process)
-            raise InitializationError(f"Cannot start Prompt Runner: {error}") from error
-        except BaseException:
-            if process is not None:
-                self._stop_live_process(process)
-            raise
-        try:
-            payload = json.loads(result_stdout)
-        except json.JSONDecodeError as error:
-            raise InitializationError(
-                f"Prompt Runner returned invalid run JSON (exit {return_code})"
-            ) from error
-        if not isinstance(payload, dict):
-            raise InitializationError(
-                "Prompt Runner returned a non-object run JSON document"
-            )
-        result = self._require_success(
-            _CommandResult(return_code, payload, "forwarded to stderr")
+            live_event_handler=self._live_event_handler,
+            live_event_stream=self._live_event_stream,
+            stream_write_lock=self._live_event_write_lock,
         )
-        if isolated_workspace is not None:
-            result = dict(result)
-            result["isolated_workspace"] = isolated_workspace
+        try:
+            outcome = self._runner.run(
+                project_name,
+                prompt_name,
+                variables=variables,
+                working_directory=working_directory,
+                model=model,
+                reasoning_effort=reasoning_effort,
+                live=True,
+                progress_sink=sink,
+            )
+        except PromptRunnerError as error:
+            _require_live_event_success(sink, prompt_name)
+            raise _runner_failure(error) from error
+        _require_live_event_success(sink, prompt_name)
+        if not isinstance(outcome, RunOutcome):
+            raise InitializationError("Prompt Runner returned a non-live outcome")
+        if self._requires_isolated_workspace and sink.isolated_workspace is None:
+            raise InitializationError(
+                f"Prompt Runner advertised no isolated workspace for {prompt_name}"
+            )
+        result = _run_outcome_record(outcome)
+        if sink.isolated_workspace is not None:
+            result["isolated_workspace"] = sink.isolated_workspace
         return result

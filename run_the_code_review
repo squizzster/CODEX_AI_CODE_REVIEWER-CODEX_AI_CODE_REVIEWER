@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-    echo "usage: ./run_the_code_review [--model MODEL] [--reasoning EFFORT] [--reports-directory DIRECTORY] <directory>" >&2
+    echo "usage: ./run_the_code_review [--prompt-version {original,v2}] [--model MODEL] [--reasoning EFFORT] [--reports-directory DIRECTORY] <directory>" >&2
 }
 
 arguments=("$@")
@@ -15,7 +15,7 @@ index=0
 while (( index < ${#arguments[@]} )); do
     argument=${arguments[index]}
     case "$argument" in
-        --model|--reasoning|--reports-directory)
+        --prompt-version|--model|--reasoning|--reports-directory)
             if (( index + 1 >= ${#arguments[@]} )); then
                 usage
                 exit 2
@@ -26,7 +26,7 @@ while (( index < ${#arguments[@]} )); do
             fi
             ((index += 2))
             ;;
-        --model=*|--reasoning=*)
+        --prompt-version=*|--model=*|--reasoning=*)
             ((index += 1))
             ;;
         --reports-directory=*)

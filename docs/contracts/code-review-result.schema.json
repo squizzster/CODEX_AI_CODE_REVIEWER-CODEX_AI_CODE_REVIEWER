@@ -8,6 +8,8 @@
     "schema",
     "ok",
     "phase",
+    "prompt_version",
+    "prompt_project",
     "report_project_name",
     "report_run_id",
     "report_directory",
@@ -16,18 +18,25 @@
     "catalog",
     "variables",
     "runtime_variables",
+    "prompt_runner_policy",
     "specialist_reviews",
     "review"
   ],
   "properties": {
     "schema": {
-      "const": "codex-ai-code-reviewer.result/v2"
+      "const": "codex-ai-code-reviewer.result/v4"
     },
     "ok": {
       "const": true
     },
     "phase": {
       "const": "code_review_complete"
+    },
+    "prompt_version": {
+      "enum": ["original", "v2"]
+    },
+    "prompt_project": {
+      "enum": ["CODEX_AI_CODE_REVIEW", "CODEX_AI_CODE_REVIEW_V2"]
     },
     "report_project_name": {
       "type": "string",
@@ -95,6 +104,21 @@
       "required": ["ARG_DIRECTORY"],
       "properties": {
         "ARG_DIRECTORY": { "type": "string" }
+      }
+    },
+    "prompt_runner_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attempt_timeout_seconds", "retry_delays_seconds"],
+      "properties": {
+        "attempt_timeout_seconds": { "const": 5400.0 },
+        "retry_delays_seconds": {
+          "type": "array",
+          "prefixItems": [{ "const": 120 }, { "const": 300 }],
+          "items": false,
+          "minItems": 2,
+          "maxItems": 2
+        }
       }
     },
     "specialist_reviews": {
