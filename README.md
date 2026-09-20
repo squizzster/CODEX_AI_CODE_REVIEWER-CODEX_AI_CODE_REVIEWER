@@ -62,11 +62,13 @@ Reports default to this project's `reports/` directory. A relative
    `ANALYZE_INTEGRITY`, `ANALYZE_SECURITY`, and `ANALYZE_PERFORMANCE` in parallel.
    Each receives only its matching reconnaissance block as `{{VAR:QUESTIONS}}`.
 5. After each successful execution, scan its real `outputs/` directory for Markdown
-   files. Other file types may coexist there. One non-empty regular Markdown file
-   becomes that execution's `FINAL_OUTPUT_PRODUCED`; when no Markdown file exists,
-   the Prompt Runner final turn becomes `FINAL_OUTPUT_PRODUCED`. More than one
-   Markdown file, or neither source, fails. Publish the selected content internally
-   as `{{VAR:<PROMPT_NAME>_OUTPUT}}`.
+   files. Other file types may coexist there. A non-empty regular `final_report.md`
+   is authoritative even when supporting Markdown files coexist. Without that named
+   file, one non-empty regular Markdown file becomes that execution's
+   `FINAL_OUTPUT_PRODUCED`; when no Markdown file exists, the Prompt Runner final turn
+   becomes `FINAL_OUTPUT_PRODUCED`. More than one Markdown file without
+   `final_report.md`, or neither source, fails. Publish the selected content
+   internally as `{{VAR:<PROMPT_NAME>_OUTPUT}}`.
 6. Run `COMPARE_AGENT_REPORTS` only after all specialist reports succeed, with each
    complete file-backed report bound by prompt identity rather than completion order.
 7. Apply the same file-preferred, final-message-fallback selection to
@@ -83,8 +85,8 @@ no report directory is published from an incomplete pipeline.
 
 The Prompt Runner's final-message `output` remains in each review record as execution
 metadata and as the fallback report when `outputs/` contains no Markdown. A valid
-Markdown report does not require a final turn. Multiple Markdown files remain an error
-because the intended report would be ambiguous.
+Markdown report does not require a final turn. Multiple Markdown files remain an
+error only when `final_report.md` is absent and the intended report is ambiguous.
 
 Each published filename follows `<PROMPT_NAME>_OUTPUT.md`, including
 `ANALYZE_SECURITY_OUTPUT.md` and `COMPARE_AGENT_REPORTS_OUTPUT.md`. The comparison
@@ -125,9 +127,9 @@ remain isolated from the source repository by Prompt Runner.
   the root cause and supporting evidence without implementing a fix.
 - `--prompt-version` changes the selected on-disk project only. Model and reasoning
   overrides remain independent of prompt version.
-- The comparison prompt encourages a single `outputs/final_report.md`; the runtime
-  still accepts any single non-empty Markdown file or its documented final-message
-  fallback.
+- The comparison prompt encourages `outputs/final_report.md`; the runtime treats that
+  exact file as authoritative when other Markdown files coexist, while still accepting
+  any single non-empty Markdown file or its documented final-message fallback.
 - Repository variables may reference `{{VAR:NAME}}`; missing references and cycles
   fail before execution.
 - Every CLI startup validates both selectable versions, including the version not

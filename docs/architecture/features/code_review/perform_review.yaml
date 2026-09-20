@@ -26,7 +26,7 @@ outcomes:
   - one <PROMPT_NAME>_OUTPUT.md file for each specialist and the comparison
   - one reconnaissance question block routed exclusively to each matching specialist
   - each report-producing prompt owns one run-local <PROMPT_NAME>_OUTPUT variable
-  - each execution derives FINAL_OUTPUT_PRODUCED from its one Markdown report, falling back to the Prompt Runner final turn when none exists
+  - each execution derives FINAL_OUTPUT_PRODUCED from final_report.md when present, otherwise its one Markdown report, falling back to the Prompt Runner final turn when none exists
   - each prompt output variable contains that execution's FINAL_OUTPUT_PRODUCED value
   - each stock-executor workspace is initialized from its first location-bearing live event
 failures:
@@ -109,10 +109,10 @@ extensions:
       output_contract:
         scan: direct children of outputs
         ignored_entries: every non-Markdown entry
-        markdown_selection: use exactly one; fall back to final message when zero; reject more than one
+        markdown_selection: prefer exact final_report.md; otherwise use exactly one; fall back to final message when zero; reject ambiguous multiples
         file_requirements: nonempty regular file, not a symlink
         prompt_runner_final_message: retained as execution metadata and used as the zero-file fallback
-        final_output_produced: one Markdown file when present, otherwise the nonempty final turn; fail when neither exists
+        final_output_produced: final_report.md when present, otherwise one Markdown file, otherwise the nonempty final turn; fail when selection is ambiguous or no source exists
       workspace_readme: resolved specialist instruction or comparison prompt
       cached_result_creates_workspace: false
       custom_executor_without_isolated_workspace: final message supplies the report
