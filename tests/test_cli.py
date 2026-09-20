@@ -493,6 +493,25 @@ def test_workspace_report_does_not_require_a_final_turn(tmp_path: Path) -> None:
     assert _final_output_produced(review, prompt) == "Complete file-backed report\n"
 
 
+def test_final_report_is_authoritative_when_other_markdown_exists(
+    tmp_path: Path,
+) -> None:
+    prompt = _prompt_definitions(tmp_path)["ANALYZE_PIPELINE"]
+    workspace = tmp_path / "isolated-workspace"
+    outputs = workspace / "outputs"
+    outputs.mkdir(parents=True)
+    (outputs / "provisional_synthesis.md").write_text(
+        "Supporting analysis\n", encoding="utf-8"
+    )
+    (outputs / "final_report.md").write_text(
+        "Accepted final report\n", encoding="utf-8"
+    )
+    review = _successful_review("Small completion handoff")
+    review["isolated_workspace"] = str(workspace)
+
+    assert _final_output_produced(review, prompt) == "Accepted final report\n"
+
+
 @pytest.mark.parametrize(
     ("reports", "message"),
     [
@@ -500,7 +519,7 @@ def test_workspace_report_does_not_require_a_final_turn(tmp_path: Path) -> None:
         ({"empty.md": "  \n"}, "is empty"),
     ],
 )
-def test_workspace_report_requires_exactly_one_nonempty_markdown_file(
+def test_workspace_report_rejects_ambiguous_or_empty_markdown_selection(
     tmp_path: Path, reports: dict[str, str], message: str
 ) -> None:
     prompt = _prompt_definitions(tmp_path)["ANALYZE_PIPELINE"]

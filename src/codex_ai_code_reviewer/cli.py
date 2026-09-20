@@ -44,6 +44,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_ROOT = PROJECT_ROOT / "conf" / "projects"
 VARIABLES_ROOT = PROJECT_ROOT / "conf" / "vars"
 DEFAULT_REPORTS_ROOT = PROJECT_ROOT / "reports"
+AUTHORITATIVE_REPORT_NAME = "final_report.md"
 RESULT_SCHEMA = "codex-ai-code-reviewer.result/v4"
 ANALYSIS_PROJECT = "CODEX_AI_CODE_REVIEW"
 V2_ANALYSIS_PROJECT = "CODEX_AI_CODE_REVIEW_V2"
@@ -294,7 +295,7 @@ def _require_report_output(review: dict[str, Any], prompt: PromptDefinition) -> 
 def _final_output_produced(
     review: dict[str, Any], prompt: PromptDefinition
 ) -> str:
-    """Return one Markdown report or fall back to the agent's final turn."""
+    """Return the authoritative Markdown report or the agent's final turn."""
 
     workspace_value = review.get("isolated_workspace")
     if not isinstance(workspace_value, str) or not workspace_value:
@@ -317,14 +318,18 @@ def _final_output_produced(
             f"Cannot scan {OUTPUT_DIRECTORY_NAME}/ for "
             f"{prompt.project_name}/{prompt.prompt_name}: {error}"
         ) from error
-    if len(markdown_paths) != 1:
-        if not markdown_paths:
-            return _require_report_output(review, prompt)
+    if not markdown_paths:
+        return _require_report_output(review, prompt)
+    authoritative_report = output_directory / AUTHORITATIVE_REPORT_NAME
+    if authoritative_report in markdown_paths:
+        report_path = authoritative_report
+    elif len(markdown_paths) == 1:
+        report_path = markdown_paths[0]
+    else:
         raise InitializationError(
-            f"Prompt must produce exactly one Markdown file in "
-            f"{output_directory}; found {len(markdown_paths)}"
+            f"Prompt must produce {AUTHORITATIVE_REPORT_NAME} or exactly one "
+            f"Markdown file in {output_directory}; found {len(markdown_paths)}"
         )
-    report_path = markdown_paths[0]
     if report_path.is_symlink() or not report_path.is_file():
         raise InitializationError(
             f"Prompt report must be a regular file inside {output_directory}: "
