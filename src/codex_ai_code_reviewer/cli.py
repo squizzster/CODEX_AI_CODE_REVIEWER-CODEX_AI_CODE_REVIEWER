@@ -20,11 +20,13 @@ from typing import Any, Protocol
 
 from codex_ai_code_reviewer.initialization import (
     ARG_DIRECTORY_VARIABLE,
+    PROMPT_RUNNER_ATTEMPT_TIMEOUT_SECONDS,
+    PROMPT_RUNNER_RETRY_DELAYS_SECONDS,
     REASONING_EFFORTS,
     InitializationError,
     ProjectDefinition,
     PromptDefinition,
-    PromptRunnerCli,
+    PromptRunnerLibrary,
     VariableDefinition,
     compose_variable_values,
     initialize_prompt_catalog,
@@ -41,9 +43,8 @@ from codex_ai_code_reviewer.live_events import (
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_ROOT = PROJECT_ROOT / "conf" / "projects"
 VARIABLES_ROOT = PROJECT_ROOT / "conf" / "vars"
-DEFAULT_RUNNER_ROOT = PROJECT_ROOT.parent / "CODEX_PROMPT_RUNNER_SYSTEM"
 DEFAULT_REPORTS_ROOT = PROJECT_ROOT / "reports"
-RESULT_SCHEMA = "codex-ai-code-reviewer.result/v3"
+RESULT_SCHEMA = "codex-ai-code-reviewer.result/v4"
 ANALYSIS_PROJECT = "CODEX_AI_CODE_REVIEW"
 V2_ANALYSIS_PROJECT = "CODEX_AI_CODE_REVIEW_V2"
 DEFAULT_PROMPT_VERSION = "original"
@@ -218,12 +219,35 @@ def _analysis_prompt_definitions(
 def _analysis_variable_definitions(
     project_name: str,
 ) -> tuple[VariableDefinition, ...]:
-    """Overlay one prompt project's variables onto the shared variable set."""
+    """Combine disjoint shared variables with one project's specialist lenses."""
 
     shared_variables = load_variable_definitions(VARIABLES_ROOT)
     project_variables = load_variable_definitions(
         CONFIG_ROOT / project_name / "vars"
     )
+    expected_project_names = set(SPECIALIST_VARIABLE_BY_PROMPT.values())
+    observed_project_names = {
+        variable.variable_name for variable in project_variables
+    }
+    missing = sorted(expected_project_names - observed_project_names)
+    unexpected = sorted(observed_project_names - expected_project_names)
+    if missing or unexpected:
+        details = []
+        if missing:
+            details.append(f"missing {', '.join(missing)}")
+        if unexpected:
+            details.append(f"unexpected {', '.join(unexpected)}")
+        raise InitializationError(
+            f"{CONFIG_ROOT / project_name / 'vars'}: project specialist variables "
+            f"are invalid ({'; '.join(details)})"
+        )
+    shared_names = {variable.variable_name for variable in shared_variables}
+    collisions = sorted(shared_names & observed_project_names)
+    if collisions:
+        raise InitializationError(
+            f"{CONFIG_ROOT / project_name / 'vars'}: project specialist variables "
+            f"conflict with shared variables: {', '.join(collisions)}"
+        )
     variables_by_name = {
         variable.variable_name: variable for variable in shared_variables
     }
@@ -427,6 +451,28 @@ def _workspace_readmes(
         prompt_name: f"{context.rstrip()}\n\n{readme_appendix.strip()}"
         for prompt_name, context in prompt_context.items()
     }
+
+
+def _doctor_analysis_configuration(
+    projects: tuple[ProjectDefinition, ...],
+    review_directory: Path,
+    *,
+    reserved_runtime_variables: set[str],
+) -> dict[str, tuple[dict[str, PromptDefinition], dict[str, str]]]:
+    """Validate every selectable prompt project before external state changes."""
+
+    configurations = {}
+    for prompt_version, project_name in PROMPT_PROJECT_BY_VERSION.items():
+        prompts = _analysis_prompt_definitions(projects, project_name)
+        variables = compose_variable_values(
+            _analysis_variable_definitions(project_name),
+            review_directory,
+            reserved_runtime_variables=reserved_runtime_variables,
+        )
+        _require_pipeline_variable_contract(prompts, variables)
+        _workspace_readmes(prompts, variables)
+        configurations[prompt_version] = (prompts, variables)
+    return configurations
 
 
 def _run_review_pipeline(
@@ -643,30 +689,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         reports_root = _reports_root(arguments.reports_directory)
         _enter_review_directory(review_directory)
         projects = load_project_definitions(CONFIG_ROOT)
-        analysis_prompts = _analysis_prompt_definitions(projects, prompt_project)
-        configured_variables = _analysis_variable_definitions(prompt_project)
         reserved_prompt_output_variables = {
             prompt_output_variable_name(prompt.prompt_name)
             for project in projects
             for prompt in project.prompts
         }
-        variable_values = compose_variable_values(
-            configured_variables,
+        configurations = _doctor_analysis_configuration(
+            projects,
             review_directory,
             reserved_runtime_variables={
                 *reserved_prompt_output_variables,
                 QUESTIONS_VARIABLE,
             },
         )
-        _require_pipeline_variable_contract(analysis_prompts, variable_values)
-        configured_runner_root = os.environ.get("CODEX_PROMPT_RUNNER_PROJECT_ROOT")
-        runner_root = (
-            Path(configured_runner_root).expanduser()
-            if configured_runner_root
-            else DEFAULT_RUNNER_ROOT
+        analysis_prompts, variable_values = configurations[arguments.prompt_version]
+        configured_state_root = os.environ.get("CODEX_PROMPT_RUNNER_STATE_ROOT")
+        runner_state_root = (
+            Path(configured_state_root).expanduser()
+            if configured_state_root
+            else None
         )
-        runner = PromptRunnerCli(
-            runner_root,
+        runner = PromptRunnerLibrary(
+            runner_state_root,
             live_event_handler=partial(
                 create_runner_work_space_from_event,
                 _workspace_readmes(analysis_prompts, variable_values),
@@ -714,6 +758,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             | {QUESTIONS_VARIABLE}
         ),
         "runtime_variables": {ARG_DIRECTORY_VARIABLE: str(review_directory)},
+        "prompt_runner_policy": {
+            "attempt_timeout_seconds": PROMPT_RUNNER_ATTEMPT_TIMEOUT_SECONDS,
+            "retry_delays_seconds": list(PROMPT_RUNNER_RETRY_DELAYS_SECONDS),
+        },
         "specialist_reviews": {
             prompt_name: _review_summary(prompt_name, review)
             for prompt_name, review in pipeline.specialist_reviews.items()

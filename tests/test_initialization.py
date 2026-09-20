@@ -175,7 +175,7 @@ def test_initialize_updates_a_drifted_prompt_then_becomes_idempotent(
     assert gateway.registered_prompts == [prompt]
 
 
-def test_prompt_names_are_scoped_by_project(
+def test_identical_global_prompt_definitions_may_link_to_multiple_projects(
     tmp_path: Path,
 ) -> None:
     _write_prompt(tmp_path / "FIRST_PROJECT" / "SHARED_NAME.yaml")
@@ -199,6 +199,19 @@ def test_prompt_names_are_scoped_by_project(
         "FIRST_PROJECT/SHARED_NAME",
         "SECOND_PROJECT/SHARED_NAME",
     )
+
+
+def test_conflicting_global_prompt_definitions_are_rejected(
+    tmp_path: Path,
+) -> None:
+    _write_prompt(tmp_path / "FIRST_PROJECT" / "SHARED_NAME.yaml")
+    _write_prompt(
+        tmp_path / "SECOND_PROJECT" / "SHARED_NAME.yaml",
+        template='Say "something else"',
+    )
+
+    with pytest.raises(InitializationError, match="conflicts with"):
+        load_project_definitions(tmp_path)
 
 
 def test_prompt_name_must_form_a_stable_output_variable(tmp_path: Path) -> None:

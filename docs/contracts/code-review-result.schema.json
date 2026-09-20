@@ -18,12 +18,13 @@
     "catalog",
     "variables",
     "runtime_variables",
+    "prompt_runner_policy",
     "specialist_reviews",
     "review"
   ],
   "properties": {
     "schema": {
-      "const": "codex-ai-code-reviewer.result/v3"
+      "const": "codex-ai-code-reviewer.result/v4"
     },
     "ok": {
       "const": true
@@ -103,6 +104,21 @@
       "required": ["ARG_DIRECTORY"],
       "properties": {
         "ARG_DIRECTORY": { "type": "string" }
+      }
+    },
+    "prompt_runner_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attempt_timeout_seconds", "retry_delays_seconds"],
+      "properties": {
+        "attempt_timeout_seconds": { "const": 5400.0 },
+        "retry_delays_seconds": {
+          "type": "array",
+          "prefixItems": [{ "const": 120 }, { "const": 300 }],
+          "items": false,
+          "minItems": 2,
+          "maxItems": 2
+        }
       }
     },
     "specialist_reviews": {

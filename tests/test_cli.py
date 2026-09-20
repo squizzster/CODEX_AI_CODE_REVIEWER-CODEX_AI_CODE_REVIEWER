@@ -29,6 +29,7 @@ from codex_ai_code_reviewer.cli import (
     ReviewExecutionOverrides,
     _analysis_prompt_definitions,
     _analysis_variable_definitions,
+    _doctor_analysis_configuration,
     _enter_review_directory,
     _extract_specialist_question_blocks,
     _final_output_produced,
@@ -791,6 +792,30 @@ def test_specialist_variables_are_owned_by_their_prompt_project() -> None:
     )
 
 
+def test_configuration_doctor_validates_every_prompt_version(tmp_path: Path) -> None:
+    projects = load_project_definitions(CONFIG_ROOT)
+    reserved_runtime_variables = {
+        QUESTIONS_VARIABLE,
+        *(
+            prompt_output_variable_name(prompt.prompt_name)
+            for project in projects
+            for prompt in project.prompts
+        ),
+    }
+
+    configurations = _doctor_analysis_configuration(
+        projects,
+        tmp_path,
+        reserved_runtime_variables=reserved_runtime_variables,
+    )
+
+    assert set(configurations) == set(PROMPT_PROJECT_BY_VERSION)
+    for prompt_version, project_name in PROMPT_PROJECT_BY_VERSION.items():
+        prompts, variables = configurations[prompt_version]
+        assert all(prompt.project_name == project_name for prompt in prompts.values())
+        assert set(SPECIALIST_VARIABLE_BY_PROMPT.values()) <= set(variables)
+
+
 def test_workspace_readmes_require_shared_appendix(tmp_path: Path) -> None:
     with pytest.raises(InitializationError, match="ADD_TO_README_MD"):
         _workspace_readmes(_prompt_definitions(tmp_path), {})
@@ -1108,6 +1133,7 @@ def test_machine_readable_result_contract_tracks_the_pipeline() -> None:
         "report_run_id",
         "report_directory",
         "report_paths",
+        "prompt_runner_policy",
     } <= set(schema["required"])
     assert schema["properties"]["prompt_version"]["enum"] == ["original", "v2"]
     assert set(schema["properties"]["prompt_project"]["enum"]) == set(
@@ -1122,3 +1148,9 @@ def test_machine_readable_result_contract_tracks_the_pipeline() -> None:
     }
     assert set(report_paths_contract["required"]) == expected_output_names
     assert set(report_paths_contract["properties"]) == expected_output_names
+    policy = schema["properties"]["prompt_runner_policy"]
+    assert policy["properties"]["attempt_timeout_seconds"]["const"] == 5400.0
+    assert [
+        item["const"]
+        for item in policy["properties"]["retry_delays_seconds"]["prefixItems"]
+    ] == [120, 300]

@@ -5,10 +5,16 @@ may be noticed or investigated.
 
 - Follow the run from prompt initialization through every specialist and the final
   comparison. Observe real actions rather than merely waiting for completion.
+- Confirm the startup doctor accepts both selectable on-disk versions before
+  catalogue activity, then distinguish a newly created prompt identity, an updated
+  prompt version/default, and an existing global prompt newly linked to a project.
 - Label the run as `original` / `CODEX_AI_CODE_REVIEW` or
   `v2` / `CODEX_AI_CODE_REVIEW_V2` before interpreting its event stream.
 - Map each prompt name to its invocation ID, execution run ID, and isolated
   workspace as soon as the runner advertises them.
+- Confirm the result advertises the direct-library execution policy: 5,400 seconds
+  per attempt and retry delays of 120 and 300 seconds. Distinguish retryable failures
+  from permanent failures, which are not retried.
 - When reconnaissance supplies specialist questions, verify that every required
   block is complete and that each specialist receives only its own block.
 - Interpret each specialist through its full role instructions. A prompt name is a
@@ -36,7 +42,7 @@ may be noticed or investigated.
 - For the comparison stage, examine whether it receives the complete specialist
   evidence, validates claims against code and tests, handles disagreement, rejects
   weak findings, preserves strengths, and produces a defensible priority order.
-- After completion, verify the v3 success result and its `prompt_version` and
+- After completion, verify the v4 success result and its `prompt_version` and
   `prompt_project`, the sortable UTC report directory,
   seven correctly named nonempty report files, specialist identities, and target
   repository cleanliness.

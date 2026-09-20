@@ -16,8 +16,12 @@ inputs:
   - optional run-scoped model and reasoning overrides
   - optional reports root override
 outcomes:
+  - every selectable prompt version passes the startup configuration doctor before external state changes
+  - every discovered on-disk project and prompt is reconciled into the Prompt Runner catalogue
+  - identical global prompt identities are linked to every owning project
   - versioned JSON result on stdout
   - selected prompt version and concrete prompt project recorded in the result
+  - effective Prompt Runner timeout and retry-delay policy recorded in the result
   - one reports/<project_name>/<review_started_at_utc>/ directory
   - one <PROMPT_NAME>_OUTPUT.md file for each specialist and the comparison
   - one reconnaissance question block routed exclusively to each matching specialist
@@ -27,6 +31,7 @@ outcomes:
   - each stock-executor workspace is initialized from its first location-bearing live event
 failures:
   - invalid directory, configuration, or variable graph returns exit code 2
+  - conflicting definitions of one global prompt identity fail before catalogue mutation
   - catalogue or execution failure returns exit code 2
   - an incomplete specialist stage prevents comparison and publication
 policies: []
@@ -47,6 +52,21 @@ verification:
 open_questions:
   - add an acknowledged workspace-ready handshake before Codex launch
 extensions:
+  startup_doctor:
+    scope: every selectable prompt version
+    timing: before Prompt Runner construction and catalogue mutation
+    validates:
+      - required pipeline prompts
+      - exact project-local specialist variable set
+      - shared and project-local variable composition
+      - reserved runtime names and reference cycles
+      - prompt-stage variable contracts
+      - isolated-workspace README construction
+  catalogue_reconciliation:
+    discovers: every conf/projects/* directory
+    creates: [projects, prompts, project_memberships]
+    updates: [prompt_versions, prompt_execution_defaults]
+    shared_prompt_rule: identical text and execution defaults only
   prompt_projects:
     original: CODEX_AI_CODE_REVIEW
     v2: CODEX_AI_CODE_REVIEW_V2
@@ -62,6 +82,11 @@ extensions:
   reconnaissance_prompt: ANALYZE_RECONNAISSANCE
   comparison_prompt: COMPARE_AGENT_REPORTS
   execution:
+    prompt_runner_boundary: direct_python_api
+    dependency: editable sibling CODEX_PROMPT_RUNNER_SYSTEM
+    attempt_timeout_seconds: 5400
+    retry_delays_seconds: [120, 300]
+    permanent_failures_are_retried: false
     stages:
       - reconnaissance
       - six_parallel_specialists
@@ -133,7 +158,7 @@ extensions:
       ANALYZE_PERFORMANCE: BALANCED
       COMPARE_AGENT_REPORTS: NETWORKED_WORKSPACE
   operational_limits:
-    - specialist reports cross the Prompt Runner boundary as process arguments
+    - specialist reports remain subject to Prompt Runner prompt/materialization size contracts
     - runs have no persisted resume state
     - generated reports require external retention management
     - an acknowledged workspace-ready handshake remains a TODO

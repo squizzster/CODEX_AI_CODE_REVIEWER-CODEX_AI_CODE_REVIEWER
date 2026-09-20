@@ -8,8 +8,12 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "codex-prompt-runner-system",
     "pyyaml>=6.0.3",
 ]
+
+[tool.uv.sources]
+codex-prompt-runner-system = { path = "../CODEX_PROMPT_RUNNER_SYSTEM", editable = true }
 
 [project.urls]
 Repository = "https://github.com/squizzster/CODEX_AI_CODE_REVIEWER-CODEX_AI_CODE_REVIEWER"
